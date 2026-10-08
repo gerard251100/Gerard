@@ -342,13 +342,20 @@ async function deliver(to, subject, html) {
   );
 }
 
+// Dirección pública cuando la página está publicada en un hosting (Railway la da sola).
+function hostedUrl() {
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL;
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  return '';
+}
+
 // Avisa al cliente por correo. Devuelve 'sent', 'no-email', 'off' o el mensaje de error.
 async function notifyOrder(id, kind) {
   const order = loadOrder(id);
   if (!order || !order.client_email) return 'no-email';
   const cfg = getMailConfig();
   if (!mailEnabled(cfg)) return 'off';
-  const base = (publicUrl || cfg.site_url || '').replace(/\/+$/, '');
+  const base = (publicUrl || cfg.site_url || hostedUrl() || '').replace(/\/+$/, '');
   const link = base && order.track_token ? `${base}/#/pedido/${order.track_token}` : '';
   const { subject, html } = orderEmail(order, kind, link);
   try {

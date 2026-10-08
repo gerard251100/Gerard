@@ -120,6 +120,19 @@ src/order-email.js Diseño del correo que recibe el cliente
 reset-admin.js     Restablece la contraseña del administrador (RESTABLECER-CLAVE.bat)
 ```
 
-## Para publicarlo
+## Para publicarlo en internet (Railway)
 
-Necesitas un servidor o un servicio que ejecute Node.js (Render, Railway, Fly.io o un VPS) con **disco persistente**. Define `STORE_DIR` apuntando a ese disco y respalda periódicamente `data/perfumeria.db`.
+La página necesita un servicio que ejecute Node.js y un **disco permanente** para la base de datos y las fotos. Con Railway (plan Hobby, unos US$5 al mes):
+
+1. Crea una cuenta en <https://railway.com> con tu GitHub.
+2. **New Project → Deploy from GitHub repo →** elige `gerard251100/Gerard`.
+3. En el servicio: **Settings → Source → Branch**: `claude/perfumery-vendor-platform-fruygb` (la rama con la página).
+4. **Variables** (pestaña Variables):
+   - `STORE_DIR` = `/data`
+   - `ADMIN_PASSWORD` = una contraseña segura (solo se usa al crear la tienda por primera vez)
+   - `TZ` = `America/La_Paz`
+5. **Disco**: clic derecho en el servicio → **Attach Volume**, con *Mount path* `/data`.
+6. **Settings → Networking → Generate Domain**: te da una dirección `https://algo.up.railway.app`. Luego puedes conectar tu propio dominio (por ejemplo `distintoscz.com`) en **Custom Domain**.
+7. Cada vez que se suba una versión nueva a la rama, Railway la publica sola.
+
+Los enlaces "Ver mi pedido" de los correos usan automáticamente la dirección de Railway (o `PUBLIC_URL` si la defines). Respalda de vez en cuando `data/perfumeria.db` del disco.
