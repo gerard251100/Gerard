@@ -146,7 +146,13 @@ function route(method, pattern, handler) {
 
 // ---- Cuentas
 
+// Modo "Próximamente": la tienda aún no abrió al público (el administrador puede seguir probando).
+function closedToPublic(ctx) {
+  return getSettings().coming_soon === '1' && !(ctx.user && ctx.user.role === 'admin');
+}
+
 route('POST', '/api/register', async (ctx) => {
+  if (closedToPublic(ctx)) throw new HttpError(403, 'La tienda abrirá muy pronto. Vuelve en unos días.');
   const b = ctx.body;
   const name = text(b.name, 100);
   const email = text(b.email, 150).toLowerCase();
@@ -445,6 +451,7 @@ function orderByToken(token) {
 }
 
 route('POST', '/api/public/orders', async (ctx) => {
+  if (closedToPublic(ctx)) throw new HttpError(403, 'La tienda abrirá muy pronto. Todavía no recibimos pedidos.');
   const id = createOrder(ctx.body, null);
   notifyOrder(id, 'created'); // en segundo plano: el cliente no espera al correo
   return { order: publicOrder(loadOrder(id)) };
@@ -522,8 +529,8 @@ route('PATCH', '/api/orders/:id/payment', async (ctx) => {
 
 // ---- Ajustes de la tienda (QR de pago, WhatsApp)
 
-const SETTING_KEYS = ['payment_qr', 'whatsapp'];
-const DEFAULT_SETTINGS = { payment_qr: '/img/qr-yape.jpg', whatsapp: '' };
+const SETTING_KEYS = ['payment_qr', 'whatsapp', 'coming_soon'];
+const DEFAULT_SETTINGS = { payment_qr: '/img/qr-yape.jpg', whatsapp: '', coming_soon: '' };
 
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -551,6 +558,7 @@ route('PUT', '/api/admin/settings', async (ctx) => {
   const upsert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
   if ('payment_qr' in ctx.body) upsert.run('payment_qr', text(ctx.body.payment_qr, 500));
   if ('whatsapp' in ctx.body) upsert.run('whatsapp', text(ctx.body.whatsapp, 30).replace(/[^\d]/g, ''));
+  if ('coming_soon' in ctx.body) upsert.run('coming_soon', ctx.body.coming_soon ? '1' : '');
   return { settings: getSettings() };
 });
 

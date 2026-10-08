@@ -16,7 +16,7 @@ Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, ada
   - **Mis pedidos**: estado de cada pedido con barra de progreso e historial.
   - **Ranking** mensual de vendedores, con podio para los 3 primeros.
 - **Panel del administrador**:
-  - Resumen con indicadores.
+  - Resumen con indicadores y el **estado de la tienda**: modo "Próximamente" (los visitantes ven una pantalla de lanzamiento y no se reciben pedidos ni registros, mientras el administrador sigue trabajando) o abierta al público, con un solo botón.
   - Solicitudes de vendedores: aceptar, rechazar, suspender o eliminar.
   - Catálogo: agregar, editar, ocultar o eliminar perfumes, con imagen por URL o archivo subido.
   - Pedidos de clientes directos y de vendedores, con filtros: confirmar el pago, ver el comprobante, escribir al cliente por WhatsApp y cambiar el estado (Pendiente, Confirmado, En preparación, Enviado, Entregado o Cancelado) con una nota, y eliminar pedidos (uno por uno o varios a la vez, por ejemplo los de prueba).

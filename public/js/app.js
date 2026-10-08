@@ -319,6 +319,10 @@ async function router() {
   app.classList.remove('page-enter');
   void app.offsetWidth; // reinicia la animación de entrada
   app.classList.add('page-enter');
+  // Modo "Próximamente": los visitantes ven la pantalla de lanzamiento (salvo para ingresar).
+  const soon = settingsCache?.coming_soon === '1' && !state.user && route !== '#/login';
+  document.body.classList.toggle('soon-mode', soon);
+  if (soon) { viewComingSoon(); return; }
   const view = route.startsWith('#/pedido/') ? () => viewTrack(route.slice('#/pedido/'.length)) : routes[route] || viewHome;
   try {
     await view();
@@ -1035,7 +1039,18 @@ async function viewAdmin(tab) {
 }
 
 function adminSummary(body, s) {
+  const soon = settingsCache?.coming_soon === '1';
   body.innerHTML = `
+    <div class="card launch-card ${soon ? 'is-soon' : 'is-open'}">
+      <div>
+        <div class="eyebrow" style="margin:0">Estado de la tienda</div>
+        <h3 style="margin:0.3rem 0">${soon ? '🔒 Modo "Próximamente"' : '🟢 Abierta al público'}</h3>
+        <p class="small muted" style="margin:0">${soon
+          ? 'Los visitantes ven una pantalla de "Muy pronto". Tú sigues entrando y trabajando normalmente. No se reciben pedidos ni registros de vendedores.'
+          : 'Cualquier persona puede ver el catálogo, hacer pedidos y registrarse como vendedor.'}</p>
+      </div>
+      <button class="btn ${soon ? 'solid' : ''}" id="launchToggle">${soon ? 'Abrir la tienda al público' : 'Poner en "Próximamente"'}</button>
+    </div>
     <div class="stats">
       <div class="stat"><div class="lbl">Solicitudes pendientes</div><div class="val">${s.pendingVendors}</div></div>
       <div class="stat"><div class="lbl">Vendedores activos</div><div class="val">${s.approvedVendors}</div></div>
@@ -1052,6 +1067,17 @@ function adminSummary(body, s) {
       <button class="btn" data-go="ranking">Ver ranking</button>
     </div>`;
   $$('[data-go]', body).forEach((b) => b.addEventListener('click', () => viewAdmin(b.dataset.go)));
+  $('#launchToggle', body).addEventListener('click', (e) => {
+    const goSoon = !soon;
+    if (!confirm(goSoon
+      ? '¿Poner la tienda en modo "Próximamente"? Los visitantes no podrán ver el catálogo ni hacer pedidos.'
+      : '¿Abrir la tienda al público? Todos podrán ver el catálogo y hacer pedidos.')) return;
+    withBusy(e.currentTarget, async () => {
+      settingsCache = (await api('/api/admin/settings', { method: 'PUT', body: { coming_soon: goSoon } })).settings;
+      toast(goSoon ? 'Tienda en modo "Próximamente"' : '¡Tienda abierta al público! 🎉');
+      viewAdmin('resumen');
+    });
+  });
 }
 
 async function adminVendors(body, _s, filter = '') {
@@ -1590,8 +1616,26 @@ $('#year').textContent = new Date().getFullYear();
     return;
   }
   try {
-    const { user } = await api('/api/me');
+    const [{ user }] = await Promise.all([api('/api/me'), getSettings()]);
     state.user = user;
   } catch { /* sin sesión */ }
   router();
 })();
+
+function viewComingSoon() {
+  const wa = settingsCache?.whatsapp ? waLink(settingsCache.whatsapp, 'Hola Distinto SCZ, quiero saber cuándo abren la tienda.') : '';
+  app.innerHTML = `
+    <section class="soon">
+      <div class="hero-visual soon-visual" aria-hidden="true">
+        <div class="ring"></div><div class="ring dashed"></div><div class="ring pulse"></div><div class="ring pulse two"></div><div class="orbit"></div>
+        <img src="/img/emblem.png" alt="">
+      </div>
+      <div class="eyebrow">Muy pronto</div>
+      <h1 class="hero-name">DISTINTO SCZ</h1>
+      <div class="hero-tag"><span class="typed" id="typed"></span></div>
+      <p class="muted">Estamos preparando una nueva experiencia en fragancias originales.<br>Muy pronto podrás hacer tus pedidos aquí.</p>
+      ${wa ? `<a class="btn solid" href="${esc(wa)}" target="_blank" rel="noopener">Escríbenos por WhatsApp</a>` : ''}
+      <a class="soon-login" href="#/login">Acceso</a>
+    </section>`;
+  typeWriter($('#typed'), 'Tu fragancia, tu sello', 600);
+}
