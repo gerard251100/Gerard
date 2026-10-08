@@ -9,7 +9,7 @@ const { hashPassword, verifyPassword, newToken } = require('./src/security');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+const { UPLOAD_DIR, STORE_DIR } = require('./src/paths');
 const SESSION_DAYS = 7;
 const MAX_BODY = 6 * 1024 * 1024;
 
@@ -17,7 +17,6 @@ const ORDER_STATUSES = ['pendiente', 'confirmado', 'preparando', 'enviado', 'ent
 const VENDOR_STATUSES = ['pending', 'approved', 'rejected'];
 const PAYMENT_STATUSES = ['pendiente', 'pagado'];
 
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -744,6 +743,8 @@ server.listen(PORT, () => {
   console.log('');
   console.log('   NO cierres esta ventana mientras uses la pagina.');
   console.log('   Para apagarla, cierra esta ventana.');
+  console.log('');
+  console.log(`   Tus datos se guardan en: ${STORE_DIR}`);
   console.log('  ============================================');
   console.log('');
   if (process.env.OPEN_BROWSER) openBrowser(SITE_URL);

@@ -35,6 +35,16 @@ Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con
 
 > No abras `public/index.html` con doble clic: así la página se ve, pero no puedes ingresar.
 
+### Dónde quedan tus datos
+
+Perfumes, vendedores, pedidos, fotos y comprobantes se guardan en la carpeta **`DistintoSCZ-datos`** dentro de tu usuario (en Windows: `C:\Users\TuNombre\DistintoSCZ-datos`). Está fuera de la carpeta de la página, así que puedes descargar versiones nuevas sin perder nada. Haz copias de esa carpeta de vez en cuando.
+
+Si una versión anterior guardó los datos dentro de la carpeta de la página (`data` y `uploads`), se trasladan solos a `DistintoSCZ-datos` la primera vez que se enciende.
+
+### ¿Olvidaste la contraseña del administrador?
+
+Dale doble clic a **`RESTABLECER-CLAVE.bat`** (Windows) o **`restablecer-clave.command`** (Mac). La contraseña vuelve a ser `admin123`; cámbiala al ingresar.
+
 ## Requisitos
 
 - **Node.js 22.13 o superior**. No hace falta instalar dependencias: el proyecto usa solo módulos integrados de Node, entre ellos la base de datos SQLite (`node:sqlite`).
@@ -61,8 +71,9 @@ La primera vez se crea la cuenta de administrador:
 | `PORT`           | Puerto del servidor                                    | `3000`                   |
 | `ADMIN_EMAIL`    | Correo del administrador (solo en el primer arranque)  | `admin@perfumeria.com`   |
 | `ADMIN_PASSWORD` | Contraseña del administrador (solo en el primer arranque) | `admin123`            |
-| `DATA_DIR`       | Carpeta de la base de datos                            | `./data`                 |
-| `UPLOAD_DIR`     | Carpeta de imágenes subidas                            | `./uploads`              |
+| `STORE_DIR`      | Carpeta de datos (base de datos e imágenes)            | `~/DistintoSCZ-datos`    |
+| `DATA_DIR`       | Carpeta de la base de datos                            | `STORE_DIR/data`         |
+| `UPLOAD_DIR`     | Carpeta de imágenes subidas                            | `STORE_DIR/uploads`      |
 | `TZ`             | Zona horaria para calcular el mes del ranking         | la del servidor          |
 
 Ejemplo: `TZ=America/Lima ADMIN_PASSWORD=miClaveSegura npm start`
@@ -85,10 +96,10 @@ src/db.js          Esquema de la base de datos SQLite y cuenta inicial del admin
 src/security.js    Hash de contraseñas (scrypt) y tokens de sesión
 public/            Frontend (HTML, CSS y JavaScript sin frameworks)
 public/img/        Logo (emblema con fondo transparente) y favicon
-data/              Base de datos (se crea sola y no se sube a git)
-uploads/           Imágenes de perfumes subidas
+src/paths.js       Ubicación de los datos (~/DistintoSCZ-datos) y traslado desde versiones anteriores
+reset-admin.js     Restablece la contraseña del administrador (RESTABLECER-CLAVE.bat)
 ```
 
 ## Para publicarlo
 
-Necesitas un servidor o un servicio que ejecute Node.js (Render, Railway, Fly.io o un VPS) con **disco persistente** para `data/` y `uploads/`. Respalda periódicamente el archivo `data/perfumeria.db`.
+Necesitas un servidor o un servicio que ejecute Node.js (Render, Railway, Fly.io o un VPS) con **disco persistente**. Define `STORE_DIR` apuntando a ese disco y respalda periódicamente `data/perfumeria.db`.

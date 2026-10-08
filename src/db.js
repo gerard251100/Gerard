@@ -1,14 +1,10 @@
 'use strict';
 
-const path = require('node:path');
-const fs = require('node:fs');
 const { DatabaseSync } = require('node:sqlite');
 const { hashPassword } = require('./security');
+const { DB_FILE } = require('./paths');
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
-const db = new DatabaseSync(process.env.DB_FILE || path.join(DATA_DIR, 'perfumeria.db'));
+const db = new DatabaseSync(DB_FILE);
 
 db.exec(`
   PRAGMA journal_mode = WAL;
