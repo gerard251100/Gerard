@@ -37,7 +37,7 @@ Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con
 
 ### Verla desde el celular
 
-Con el celular conectado al **mismo Wi-Fi** que la computadora, abre la dirección que aparece en la ventana negra bajo *"Desde tu celular"* (por ejemplo `http://192.168.1.45:3000`). La primera vez, Windows pregunta si permite a Node.js usar la red: marca **Redes privadas** y presiona **Permitir**.
+Con el celular conectado al **mismo Wi-Fi** que la computadora, abre la dirección que aparece en la ventana negra bajo *"Desde tu celular"* (por ejemplo `http://192.168.1.45:3000`). La primera vez, Windows pregunta si permite a Node.js usar la red: marca **Redes privadas** y presiona **Permitir**. Si el celular no carga, dale doble clic a **`PERMITIR-CELULAR.bat`** (abre el puerto 3000 en el Firewall de Windows; pide permiso de administrador).
 
 ### Dónde quedan tus datos
 
