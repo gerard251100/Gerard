@@ -117,7 +117,7 @@ async function withBusy(button, fn) {
 function productImage(p) {
   return p.image
     ? `<img src="${esc(p.image)}" alt="${esc(p.name)}" loading="lazy">`
-    : '<div class="placeholder-bottle" aria-hidden="true"></div>';
+    : '<img class="placeholder-emblem" src="/img/emblem.png" alt="" aria-hidden="true">';
 }
 
 function badge(status, labels = STATUS_LABELS) {
@@ -207,6 +207,9 @@ async function router() {
   const route = location.hash.split('?')[0] || '#/';
   renderNav();
   window.scrollTo(0, 0);
+  app.classList.remove('page-enter');
+  void app.offsetWidth; // reinicia la animación de entrada
+  app.classList.add('page-enter');
   const view = routes[route] || viewHome;
   try {
     await view();
@@ -221,18 +224,34 @@ window.addEventListener('hashchange', router);
    Vistas públicas
    ================================================================= */
 async function viewHome() {
+  const panelLink = state.user
+    ? `<a class="btn" href="${state.user.role === 'admin' ? '#/admin' : '#/panel'}">Ir a mi panel</a>`
+    : '<a class="btn" href="#/registro">Quiero ser vendedor</a>';
+  const marqueeItems = ['Distinto SCZ', '<span class="script">Tu fragancia, tu sello</span>', 'Perfumes originales', 'Hombre', 'Mujer', 'Unisex', 'Santa Cruz']
+    .map((t) => (t.startsWith('<') ? t : `<span>${t}</span>`)).join('<span class="dot">◇</span>');
   app.innerHTML = `
-    <section class="hero">
+    <section class="hero brand-hero">
       <div class="hero-content">
-        <div class="eyebrow">Alta perfumería</div>
-        <h1>El arte de la<br>fragancia</h1>
-        <p>Descubre nuestro catálogo de perfumes originales. ¿Quieres generar ingresos? Únete a nuestro equipo de vendedores y gana comisión por cada venta.</p>
+        <div class="eyebrow">Perfumería · Santa Cruz</div>
+        <h1 class="hero-name"><span class="word" style="animation-delay:.15s">DISTINTO</span> <span class="word" style="animation-delay:.35s">SCZ</span></h1>
+        <div class="hero-tag"><span class="typed" id="typed"></span></div>
+        <div class="hero-rule"></div>
+        <p>Fragancias originales que hablan por ti. ¿Quieres generar ingresos? Únete a nuestro equipo de vendedores y gana comisión por cada venta.</p>
         <div class="hero-actions">
           <a class="btn solid" href="#/catalogo">Ver catálogo</a>
-          ${state.user ? `<a class="btn" href="${state.user.role === 'admin' ? '#/admin' : '#/panel'}">Ir a mi panel</a>` : '<a class="btn" href="#/registro">Quiero ser vendedor</a>'}
+          ${panelLink}
         </div>
       </div>
+      <div class="hero-visual" aria-hidden="true">
+        <div class="ring"></div>
+        <div class="ring dashed"></div>
+        <div class="ring pulse"></div>
+        <div class="ring pulse two"></div>
+        <div class="orbit"></div>
+        <img src="/img/emblem.png" alt="">
+      </div>
     </section>
+    <div class="marquee" aria-hidden="true"><div class="marquee-track">${marqueeItems}<span class="dot">◇</span>${marqueeItems}<span class="dot">◇</span></div></div>
     <div class="features">
       <div class="feature"><div class="num">01</div><h3>Regístrate</h3><p class="muted small">Envía tu solicitud para ser vendedor. Te avisaremos cuando sea aprobada.</p></div>
       <div class="feature"><div class="num">02</div><h3>Vende</h3><p class="muted small">Consulta precios sugeridos y tu comisión por cada perfume. Arma pedidos para tus clientes.</p></div>
@@ -241,11 +260,33 @@ async function viewHome() {
     <section class="section">
       <div class="section-head"><h2>Destacados</h2><a class="btn sm" href="#/catalogo">Ver todo</a></div>
       <div id="featured"></div>
-    </section>`;
+    </section>
+    ${state.user ? '' : `
+    <section class="section cta">
+      <img src="/img/emblem.png" alt="" aria-hidden="true">
+      <div>
+        <h2 style="margin:0">Vende con Distinto SCZ</h2>
+        <div class="script">Gana comisión y compite por los premios del mes</div>
+      </div>
+      <a class="btn solid" href="#/registro">Registrarme</a>
+    </section>`}`;
+  typeWriter($('#typed'), 'Tu fragancia, tu sello');
   const { perfumes } = await api('/api/catalog');
   $('#featured').innerHTML = perfumes.length
     ? `<div class="grid">${perfumes.slice(0, 8).map((p) => productCard(p)).join('')}</div>`
     : '<div class="empty">Pronto publicaremos nuestro catálogo.</div>';
+}
+
+function typeWriter(el, textValue, delay = 900) {
+  if (!el) return;
+  if (reducedMotion) { el.textContent = textValue; return; }
+  let i = 0;
+  const tick = () => {
+    if (!el.isConnected) return;
+    el.textContent = textValue.slice(0, ++i);
+    if (i < textValue.length) setTimeout(tick, 70);
+  };
+  setTimeout(tick, delay);
 }
 
 function productCard(p, { vendor = false } = {}) {
@@ -919,6 +960,78 @@ function adminAccount(body) {
     });
   });
 }
+
+/* =================================================================
+   Efectos dinámicos
+   ================================================================= */
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const REVEAL_SELECTOR = '.product, .feature, .stat, .order, .section-head, .podium-place, .table-wrap, .card, .cta, .empty, .cart-line';
+
+const revealObserver = 'IntersectionObserver' in window
+  ? new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('in');
+      revealObserver.unobserve(entry.target);
+      const val = entry.target.matches('.stat') && $('.val', entry.target);
+      if (val) countUp(val);
+    }
+  }, { threshold: 0.08, rootMargin: '0px 0px -30px 0px' })
+  : null;
+
+function prepareReveal(root) {
+  if (!revealObserver || reducedMotion) return;
+  const items = root.matches?.(REVEAL_SELECTOR) ? [root] : [];
+  items.push(...$$(REVEAL_SELECTOR, root));
+  for (const el of items) {
+    if (el.classList.contains('reveal') || el.closest('.modal')) continue;
+    const siblings = el.parentElement ? [...el.parentElement.children] : [];
+    el.style.setProperty('--d', `${Math.min(siblings.indexOf(el), 8) * 70}ms`);
+    el.classList.add('reveal');
+    revealObserver.observe(el);
+  }
+}
+
+new MutationObserver((mutations) => {
+  for (const m of mutations) for (const node of m.addedNodes) if (node.nodeType === 1) prepareReveal(node);
+}).observe(app, { childList: true, subtree: true });
+
+// Anima los números de las tarjetas de estadísticas desde 0.
+function countUp(el) {
+  const original = el.textContent.trim();
+  const isMoney = original.startsWith(CURRENCY);
+  const prefix = isMoney ? CURRENCY : original.startsWith('#') ? '#' : '';
+  const raw = original.slice(prefix.length);
+  const target = isMoney ? Number(raw.replace(/\./g, '').replace(',', '.')) : Number(raw);
+  if (!Number.isFinite(target) || target === 0) return;
+  const start = performance.now();
+  const duration = 1100;
+  const step = (now) => {
+    if (!el.isConnected) return;
+    const t = Math.min(1, (now - start) / duration);
+    const v = target * (1 - Math.pow(1 - t, 3));
+    el.textContent = t < 1 ? (isMoney ? money(v) : prefix + Math.round(v)) : original;
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// Barra de progreso de scroll y header compacto.
+const scrollBar = $('#scrollProgress');
+window.addEventListener('scroll', () => {
+  const max = document.documentElement.scrollHeight - window.innerHeight;
+  scrollBar.style.transform = `scaleX(${max > 0 ? window.scrollY / max : 0})`;
+  $('#topbar').classList.toggle('scrolled', window.scrollY > 40);
+}, { passive: true });
+
+// Intro con el logo: una vez por sesión del navegador.
+(function intro() {
+  const el = $('#intro');
+  let seen = false;
+  try { seen = sessionStorage.getItem('introSeen') === '1'; sessionStorage.setItem('introSeen', '1'); } catch { /* sin almacenamiento */ }
+  if (seen || reducedMotion) { el.remove(); return; }
+  setTimeout(() => { el.classList.add('done'); setTimeout(() => el.remove(), 800); }, 1900);
+})();
 
 /* =================================================================
    Inicio

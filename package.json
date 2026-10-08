@@ -1,7 +1,7 @@
 {
-  "name": "perfumeria",
+  "name": "distinto-scz",
   "version": "1.0.0",
-  "description": "Catálogo de perfumes con panel de vendedores, pedidos y ranking mensual",
+  "description": "Distinto SCZ: catálogo de perfumes con panel de vendedores, pedidos y ranking mensual",
   "main": "server.js",
   "private": true,
   "scripts": {

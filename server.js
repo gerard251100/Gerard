@@ -597,5 +597,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Perfumería lista en http://localhost:${PORT}`);
+  console.log(`Distinto SCZ listo en http://localhost:${PORT}`);
 });

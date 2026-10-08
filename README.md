@@ -1,6 +1,8 @@
-# Perfumería: catálogo y plataforma de vendedores
+# Distinto SCZ: catálogo y plataforma de vendedores
 
-Sitio web en negro con líneas blancas para la perfumería. Incluye:
+*Tu fragancia, tu sello.*
+
+Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con el logo de la marca y animaciones (intro con el logo, aparición de elementos al hacer scroll, contadores animados, marquesina y transiciones entre páginas; se desactivan si el sistema pide reducir el movimiento). Incluye:
 
 - **Catálogo público** de perfumes, con búsqueda y filtro por categoría.
 - **Registro de vendedores**: las personas envían su solicitud y el administrador la **acepta o rechaza**.
@@ -66,6 +68,7 @@ server.js          Servidor HTTP y API
 src/db.js          Esquema de la base de datos SQLite y cuenta inicial del administrador
 src/security.js    Hash de contraseñas (scrypt) y tokens de sesión
 public/            Frontend (HTML, CSS y JavaScript sin frameworks)
+public/img/        Logo (emblema con fondo transparente) y favicon
 data/              Base de datos (se crea sola y no se sube a git)
 uploads/           Imágenes de perfumes subidas
 ```
