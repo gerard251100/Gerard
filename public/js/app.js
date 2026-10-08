@@ -125,7 +125,9 @@ function badge(status, labels = STATUS_LABELS) {
   return `<span class="badge ${esc(status)}">${esc(labels[status] || status)}</span>`;
 }
 
-function payBadge(status) {
+// "Pago en revisión": el cliente ya subió su comprobante y falta que la tienda lo confirme.
+function payBadge(status, hasProof = false) {
+  if (status === 'pendiente' && hasProof) return '<span class="badge pay-revision">Pago en revisión</span>';
   return `<span class="badge pay-${esc(status)}">${esc(PAYMENT_LABELS[status] || status)}</span>`;
 }
 
@@ -754,6 +756,17 @@ async function viewTrack(token) {
     payCard = '<div class="card pay-card center"><h3>Pedido cancelado</h3><p class="muted">Si tienes dudas, escríbenos.</p></div>';
   } else if (!pending) {
     payCard = '<div class="card pay-card center paid"><div class="paid-check">✓</div><h3>Pago confirmado</h3><p class="muted">¡Gracias! Estamos preparando tu pedido.</p></div>';
+  } else if (order.has_proof) {
+    // Ya pagó y subió el comprobante: no se muestra más el QR.
+    payCard = `
+      <div class="card pay-card center review">
+        <div class="paid-check review-check">✓</div>
+        <h3>Comprobante recibido</h3>
+        <p class="muted" style="margin:0">Estamos verificando tu pago de <strong style="color:var(--fg)">${money(order.total)}</strong>.
+          Te avisaremos cuando esté confirmado; puedes ver el estado aquí mismo.</p>
+        <label class="link-btn" for="proofFile">¿Te equivocaste de imagen? Subir otro comprobante</label>
+        <input type="file" id="proofFile" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>`;
   } else {
     payCard = `
       <div class="card pay-card">
@@ -768,7 +781,7 @@ async function viewTrack(token) {
         </ol>
         <div class="btn-row">
           <a class="btn" href="${esc(qr)}" download="QR-Distinto-SCZ">Descargar QR</a>
-          <label class="btn solid" for="proofFile">${order.has_proof ? 'Cambiar comprobante' : 'Subir comprobante'}</label>
+          <label class="btn solid" for="proofFile">Subir comprobante</label>
           <input type="file" id="proofFile" accept="image/png,image/jpeg,image/webp" hidden>
           ${wa ? `<a class="btn" href="${esc(wa)}" target="_blank" rel="noopener">Enviar por WhatsApp</a>` : ''}
         </div>
@@ -781,9 +794,11 @@ async function viewTrack(token) {
       <div>
         <div class="eyebrow">Pedido #${order.id} · ${fmtDate(order.created_at)}</div>
         <h2>${pending ? `¡Gracias, ${esc(order.client_name.split(' ')[0])}!` : `Pedido #${order.id}`}</h2>
-        ${pending ? '<p class="muted" style="margin:0">Recibimos tu pedido. Solo falta el pago para empezar a prepararlo.</p>' : ''}
+        ${pending ? `<p class="muted" style="margin:0">${order.has_proof
+          ? 'Recibimos tu pedido y tu comprobante. Estamos verificando el pago.'
+          : 'Recibimos tu pedido. Solo falta el pago para empezar a prepararlo.'}</p>` : ''}
       </div>
-      <div class="btn-row">${badge(order.status)} ${payBadge(order.payment_status)}</div>
+      <div class="btn-row">${badge(order.status)} ${payBadge(order.payment_status, order.has_proof)}</div>
     </div>
     <div class="pay-layout">
       ${payCard}
@@ -829,7 +844,7 @@ async function viewMyOrders() {
         <a class="order" href="#/pedido/${esc(o.token)}" style="display:block">
           <div class="order-head">
             <div><div class="title">Pedido #${o.id}</div><div class="small muted">${fmtDate(o.created_at)} · ${o.items.reduce((n, it) => n + it.quantity, 0)} producto(s)</div></div>
-            <div class="btn-row">${badge(o.status)} ${payBadge(o.payment_status)}</div>
+            <div class="btn-row">${badge(o.status)} ${payBadge(o.payment_status, o.has_proof)}</div>
           </div>
           <div class="order-foot"><span class="small muted">Total <strong style="color:var(--fg)">${money(o.total)}</strong></span><span class="btn sm">Ver pedido</span></div>
         </a>`).join('')}</div>`
@@ -858,7 +873,7 @@ function orderCard(o, { admin = false, statuses = [] } = {}) {
           <div class="title">${admin ? `<input type="checkbox" class="order-pick" data-pick="${o.id}" aria-label="Seleccionar pedido #${o.id}">` : ''}Pedido #${o.id} · ${esc(o.client_name)}</div>
           <div class="small muted">${fmtDate(o.created_at)}${who ? ` · ${who}` : ''}</div>
         </div>
-        <div class="btn-row">${badge(o.status)} ${admin || direct ? payBadge(o.payment_status) : ''}</div>
+        <div class="btn-row">${badge(o.status)} ${admin || direct ? payBadge(o.payment_status, Boolean(o.payment_proof)) : ''}</div>
       </div>
       <div class="order-body">
         ${progressBar(o.status)}
