@@ -665,7 +665,12 @@ function serveStatic(req, res, pathname) {
   let target = file;
   if (fs.existsSync(target) && fs.statSync(target).isDirectory()) target = path.join(target, 'index.html');
   if (!fs.existsSync(target)) return false;
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(target).toLowerCase()] || 'application/octet-stream' });
+  const ext = path.extname(target).toLowerCase();
+  res.writeHead(200, {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    // La página, los estilos y el código se revisan siempre para que cada versión nueva se vea al instante.
+    ...(['.html', '.js', '.css'].includes(ext) ? { 'Cache-Control': 'no-cache' } : {}),
+  });
   fs.createReadStream(target).pipe(res);
   return true;
 }

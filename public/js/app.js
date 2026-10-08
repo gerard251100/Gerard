@@ -212,6 +212,8 @@ function renderNav() {
     if (myOrders.read().length) html += link('#/mis-pedidos', 'Mis pedidos');
     html += link('#/registro', 'Sé vendedor') + link('#/login', 'Ingresar');
   } else if (state.user.role === 'admin') {
+    const n = cart.count();
+    html += link('#/carrito', 'Carrito', n ? ` <span class="badge count">${n}</span>` : '');
     html += link('#/admin', 'Administración');
     html += '<button class="link" data-action="logout">Salir</button>';
   } else {
@@ -338,9 +340,10 @@ function typeWriter(el, textValue, delay = 900) {
 }
 
 // mode: 'shop' (cliente: precio + carrito), 'vendor' (precio sugerido + comisión + carrito) o 'view' (solo precio).
+// El administrador también ve la tienda como cliente (para probarla y hacer pedidos de prueba).
+// Los vendedores arman sus pedidos desde su panel, con precios y comisiones.
 function cardMode() {
-  if (!state.user) return 'shop';
-  return 'view';
+  return state.user?.role === 'vendor' ? 'view' : 'shop';
 }
 
 function productCard(p, { mode = 'view' } = {}) {
@@ -435,7 +438,8 @@ async function viewCatalog() {
   const mode = cardMode();
   const filters = catalogFilters(perfumes, draw);
   root.innerHTML = `${filters.html}<div id="catalogGrid"></div>
-    ${mode === 'shop' ? '<div class="center" style="margin-top:2rem"><a class="btn solid" href="#/carrito">Ir al carrito</a></div>' : ''}`;
+    ${mode === 'shop' ? '<div class="center" style="margin-top:2rem"><a class="btn solid" href="#/carrito">Ir al carrito</a></div>'
+      : '<p class="center muted small" style="margin-top:2rem">Eres vendedor: arma los pedidos de tus clientes desde <a href="#/panel" style="text-decoration:underline">Mi panel</a>.</p>'}`;
   filters.bind(root);
   draw(perfumes);
 }
@@ -661,10 +665,6 @@ async function vendorCart(body) {
 async function viewShopCart() {
   if (state.user?.role === 'vendor') { location.hash = '#/panel/carrito'; return; }
   app.innerHTML = '<div class="section-head"><div><div class="eyebrow">Tu compra</div><h2>Carrito</h2></div></div><div id="cartBody"></div>';
-  if (state.user?.role === 'admin') {
-    $('#cartBody').innerHTML = '<div class="empty">Estás conectado como administrador. Cierra sesión para probar la tienda como cliente.</div>';
-    return;
-  }
   const { perfumes } = await api('/api/catalog');
   renderCart($('#cartBody'), {
     perfumes,
