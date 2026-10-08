@@ -127,9 +127,47 @@ function requireVendor(ctx) {
   return user;
 }
 
-function sessionCookie(token, maxAge) {
-  return `session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}`;
+function isHttps(req) {
+  return Boolean(req.socket.encrypted) || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
 }
+
+function sessionCookie(token, maxAge, req) {
+  return `session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}${req && isHttps(req) ? '; Secure' : ''}`;
+}
+
+// ---- Límite de intentos (contra adivinar contraseñas y contra spam)
+
+// IP del visitante. Detrás del proxy de Railway, la última dirección de X-Forwarded-For
+// la agrega el propio proxy y no la puede falsificar el visitante.
+function clientIp(req) {
+  const fwd = String(req.headers['x-forwarded-for'] || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return fwd.length ? fwd[fwd.length - 1] : req.socket.remoteAddress || '?';
+}
+
+const hits = new Map();
+function tooMany(key, max, windowMs) {
+  const now = Date.now();
+  const entry = hits.get(key);
+  if (!entry || entry.reset <= now) return false;
+  return entry.count >= max;
+}
+function countHit(key, windowMs) {
+  const now = Date.now();
+  const entry = hits.get(key);
+  if (!entry || entry.reset <= now) hits.set(key, { count: 1, reset: now + windowMs });
+  else entry.count += 1;
+}
+// Uso en un solo paso: cuenta el intento y corta si se pasó del límite.
+function limit(key, max, windowMs, message) {
+  if (tooMany(key, max, windowMs)) throw new HttpError(429, message);
+  countHit(key, windowMs);
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of hits) if (entry.reset <= now) hits.delete(key);
+}, 10 * 60 * 1000).unref();
+
+const MINUTE = 60 * 1000;
 
 /* ---------------------------------------------------------------- router */
 
@@ -153,6 +191,7 @@ function closedToPublic(ctx) {
 
 route('POST', '/api/register', async (ctx) => {
   if (closedToPublic(ctx)) throw new HttpError(403, 'La tienda abrirá muy pronto. Vuelve en unos días.');
+  limit(`register:${clientIp(ctx.req)}`, 5, 60 * MINUTE, 'Demasiadas solicitudes. Intenta de nuevo en una hora.');
   const b = ctx.body;
   const name = text(b.name, 100);
   const email = text(b.email, 150).toLowerCase();
@@ -172,8 +211,16 @@ route('POST', '/api/register', async (ctx) => {
 
 route('POST', '/api/login', async (ctx) => {
   const email = text(ctx.body.email, 150).toLowerCase();
+  const ipKey = `login-ip:${clientIp(ctx.req)}`;
+  const emailKey = `login-email:${email}`;
+  // Máximo 10 intentos fallidos por conexión y 30 por cuenta cada 15 minutos.
+  if (tooMany(ipKey, 10, 15 * MINUTE) || tooMany(emailKey, 30, 15 * MINUTE)) {
+    throw new HttpError(429, 'Demasiados intentos fallidos. Espera 15 minutos y vuelve a intentar.');
+  }
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   if (!user || !verifyPassword(String(ctx.body.password || ''), user.password_hash)) {
+    countHit(ipKey, 15 * MINUTE);
+    countHit(emailKey, 15 * MINUTE);
     throw new HttpError(401, 'Correo o contraseña incorrectos');
   }
   if (user.role === 'vendor' && user.status === 'pending') {
@@ -189,14 +236,14 @@ route('POST', '/api/login', async (ctx) => {
     `+${SESSION_DAYS} days`
   );
   db.prepare(`DELETE FROM sessions WHERE expires_at <= datetime('now')`).run();
-  ctx.setHeader('Set-Cookie', sessionCookie(token, SESSION_DAYS * 86400));
+  ctx.setHeader('Set-Cookie', sessionCookie(token, SESSION_DAYS * 86400, ctx.req));
   return { user: publicUser(user) };
 });
 
 route('POST', '/api/logout', async (ctx) => {
   const token = parseCookies(ctx.req).session;
   if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
-  ctx.setHeader('Set-Cookie', sessionCookie('', 0));
+  ctx.setHeader('Set-Cookie', sessionCookie('', 0, ctx.req));
   return { ok: true };
 });
 
@@ -452,6 +499,9 @@ function orderByToken(token) {
 
 route('POST', '/api/public/orders', async (ctx) => {
   if (closedToPublic(ctx)) throw new HttpError(403, 'La tienda abrirá muy pronto. Todavía no recibimos pedidos.');
+  if (!ctx.user || ctx.user.role !== 'admin') {
+    limit(`order:${clientIp(ctx.req)}`, 15, 60 * MINUTE, 'Hiciste demasiados pedidos seguidos. Escríbenos por WhatsApp si necesitas ayuda.');
+  }
   const id = createOrder(ctx.body, null);
   notifyOrder(id, 'created'); // en segundo plano: el cliente no espera al correo
   return { order: publicOrder(loadOrder(id)) };
@@ -460,6 +510,7 @@ route('POST', '/api/public/orders', async (ctx) => {
 route('GET', '/api/public/orders/:token', async (ctx) => ({ order: publicOrder(orderByToken(ctx.params.token)) }));
 
 route('POST', '/api/public/orders/:token/proof', async (ctx) => {
+  limit(`proof:${clientIp(ctx.req)}`, 20, 60 * MINUTE, 'Demasiados archivos enviados. Intenta de nuevo más tarde.');
   const order = orderByToken(ctx.params.token);
   if (order.payment_status === 'pagado') throw new HttpError(400, 'Este pedido ya figura como pagado');
   const url = saveImage(ctx.body.data);
@@ -855,6 +906,11 @@ function serveStatic(req, res, pathname) {
 /* ---------------------------------------------------------------- server */
 
 const server = http.createServer(async (req, res) => {
+  // Protecciones estándar del navegador.
+  res.setHeader('X-Content-Type-Options', 'nosniff'); // las fotos subidas no se pueden ejecutar como código
+  res.setHeader('X-Frame-Options', 'DENY'); // nadie puede meter la página dentro de otra para engañar clics
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname;
 

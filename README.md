@@ -120,6 +120,14 @@ src/order-email.js Diseño del correo que recibe el cliente
 reset-admin.js     Restablece la contraseña del administrador (RESTABLECER-CLAVE.bat)
 ```
 
+## Seguridad
+
+- Contraseñas guardadas con *scrypt* (nunca en texto plano) y sesiones con tokens aleatorios en cookies `HttpOnly`, `SameSite=Lax` y `Secure` bajo HTTPS.
+- Límite de intentos: 10 contraseñas fallidas por conexión y 30 por cuenta cada 15 minutos; 15 pedidos por hora, 5 registros por hora y 20 comprobantes por hora desde una misma conexión.
+- Encabezados `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` y `Strict-Transport-Security`.
+- Todas las acciones de administración se validan en el servidor; los vendedores solo ven sus propios pedidos.
+- Recomendado: verificación en 2 pasos en GitHub, Railway, GoDaddy y Gmail, repositorio privado y copias de seguridad del disco en Railway.
+
 ## Para publicarlo en internet (Railway)
 
 La página necesita un servicio que ejecute Node.js y un **disco permanente** para la base de datos y las fotos. Con Railway (plan Hobby, unos US$5 al mes):
