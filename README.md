@@ -41,6 +41,10 @@ Perfumes, vendedores, pedidos, fotos y comprobantes se guardan en la carpeta **`
 
 Si una versión anterior guardó los datos dentro de la carpeta de la página (`data` y `uploads`), se trasladan solos a `DistintoSCZ-datos` la primera vez que se enciende.
 
+### Actualizar a la última versión
+
+Cierra la ventana negra y dale doble clic a **`ACTUALIZAR.bat`** (Windows) o **`actualizar.command`** (Mac). Descarga la última versión, la instala en la misma carpeta sin tocar tus datos y vuelve a abrir la página. El número de versión aparece al pie de la página.
+
 ### ¿Olvidaste la contraseña del administrador?
 
 Dale doble clic a **`RESTABLECER-CLAVE.bat`** (Windows) o **`restablecer-clave.command`** (Mac). La contraseña vuelve a ser `admin123`; cámbiala al ingresar.
