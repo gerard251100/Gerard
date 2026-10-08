@@ -19,7 +19,7 @@ Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con
   - Resumen con indicadores.
   - Solicitudes de vendedores: aceptar, rechazar, suspender o eliminar.
   - Catálogo: agregar, editar, ocultar o eliminar perfumes, con imagen por URL o archivo subido.
-  - Pedidos de clientes directos y de vendedores, con filtros: confirmar el pago, ver el comprobante, escribir al cliente por WhatsApp y cambiar el estado (Pendiente, Confirmado, En preparación, Enviado, Entregado o Cancelado) con una nota.
+  - Pedidos de clientes directos y de vendedores, con filtros: confirmar el pago, ver el comprobante, escribir al cliente por WhatsApp y cambiar el estado (Pendiente, Confirmado, En preparación, Enviado, Entregado o Cancelado) con una nota, y eliminar pedidos (uno por uno o varios a la vez, por ejemplo los de prueba).
   - Pagos y cuenta: cambiar el QR de pago, el WhatsApp de la tienda y la contraseña.
   - Ranking por mes, con la comisión de cada vendedor.
   - Cambio de contraseña.

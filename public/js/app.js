@@ -800,7 +800,7 @@ function orderCard(o, { admin = false, statuses = [] } = {}) {
     <article class="order" data-id="${o.id}">
       <div class="order-head">
         <div>
-          <div class="title">Pedido #${o.id} · ${esc(o.client_name)}</div>
+          <div class="title">${admin ? `<input type="checkbox" class="order-pick" data-pick="${o.id}" aria-label="Seleccionar pedido #${o.id}">` : ''}Pedido #${o.id} · ${esc(o.client_name)}</div>
           <div class="small muted">${fmtDate(o.created_at)}${who ? ` · ${who}` : ''}</div>
         </div>
         <div class="btn-row">${badge(o.status)} ${admin || direct ? payBadge(o.payment_status) : ''}</div>
@@ -822,6 +822,7 @@ function orderCard(o, { admin = false, statuses = [] } = {}) {
         </div>
         <div class="btn-row">
           <button class="btn sm ghost" data-detail="${o.id}">Historial</button>
+          ${admin ? `<button class="btn sm ghost danger" data-delete-order="${o.id}">Eliminar</button>` : ''}
           ${admin ? `
             ${o.payment_status === 'pagado'
               ? `<button class="btn sm ghost" data-pay="${o.id}" data-pay-to="pendiente">Marcar no pagado</button>`
@@ -1123,15 +1124,57 @@ async function adminOrders(body, _s, filter = '', source = '') {
   if (filter) qs.set('status', filter);
   if (source) qs.set('source', source);
   const { orders, statuses } = await api(`/api/orders?${qs}`);
-  const reload = () => adminOrders(body, null, filter, source);
+  const reload = () => {
+    // Actualiza también el contador de la pestaña "Pedidos (n)".
+    api('/api/admin/summary').then((sum) => {
+      const tab = $('[data-tab="pedidos"]');
+      if (tab) tab.textContent = `Pedidos${sum.openOrders ? ` (${sum.openOrders})` : ''}`;
+    }).catch(() => {});
+    return adminOrders(body, null, filter, source);
+  };
   body.innerHTML = `
     <div class="chips" style="margin-bottom:0.6rem">
       ${[['', 'Todos los pedidos'], ['cliente', 'Clientes directos'], ['vendedor', 'De vendedores']]
         .map(([k, l]) => `<button class="chip ${k === source ? 'active' : ''}" data-source="${k}">${l}</button>`).join('')}
     </div>
     ${orderFilterBar(statuses, filter)}
-    ${orders.length ? `<div class="orders">${orders.map((o) => orderCard(o, { admin: true, statuses })).join('')}</div>`
+    ${orders.length ? `
+      <div class="bulk-bar">
+        <label class="checkbox"><input type="checkbox" id="pickAll"> Seleccionar todos los de esta lista</label>
+        <button class="btn sm danger" id="deletePicked" disabled>Eliminar seleccionados</button>
+      </div>
+      <div class="orders">${orders.map((o) => orderCard(o, { admin: true, statuses })).join('')}</div>`
       : '<div class="empty">No hay pedidos en esta lista.</div>'}`;
+  const picks = $$('[data-pick]', body);
+  const picked = () => picks.filter((c) => c.checked).map((c) => Number(c.dataset.pick));
+  const refreshBulk = () => {
+    const n = picked().length;
+    const btn = $('#deletePicked', body);
+    if (!btn) return;
+    btn.disabled = !n;
+    btn.textContent = n ? `Eliminar seleccionados (${n})` : 'Eliminar seleccionados';
+    $('#pickAll', body).checked = n > 0 && n === picks.length;
+  };
+  picks.forEach((c) => c.addEventListener('change', refreshBulk));
+  $('#pickAll', body)?.addEventListener('change', (e) => { picks.forEach((c) => { c.checked = e.target.checked; }); refreshBulk(); });
+  $('#deletePicked', body)?.addEventListener('click', (e) => {
+    const ids = picked();
+    if (!ids.length || !confirm(`¿Eliminar ${ids.length} pedido(s)? Se borran por completo y no se puede deshacer.`)) return;
+    withBusy(e.currentTarget, async () => {
+      const { deleted } = await api('/api/admin/orders/delete', { method: 'POST', body: { ids } });
+      toast(`${deleted} pedido(s) eliminado(s)`);
+      reload();
+    });
+  });
+  $$('[data-delete-order]', body).forEach((b) => b.addEventListener('click', () => {
+    const id = b.dataset.deleteOrder;
+    if (!confirm(`¿Eliminar el pedido #${id}? Se borra por completo y no se puede deshacer.`)) return;
+    withBusy(b, async () => {
+      await api(`/api/orders/${id}`, { method: 'DELETE' });
+      toast(`Pedido #${id} eliminado`);
+      reload();
+    });
+  }));
   $$('[data-source]', body).forEach((c) => c.addEventListener('click', () => adminOrders(body, null, filter, c.dataset.source)));
   $$('[data-filter]', body).forEach((c) => c.addEventListener('click', () => adminOrders(body, null, c.dataset.filter, source)));
   $$('[data-detail]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, () => showOrderHistory(b.dataset.detail))));

@@ -345,6 +345,41 @@ route('POST', '/api/public/orders/:token/proof', async (ctx) => {
   return { order: publicOrder(loadOrder(order.id)) };
 });
 
+// Borra pedidos (por ejemplo, los de prueba) junto con sus productos, historial y comprobante.
+function deleteOrders(ids) {
+  const clean = [...new Set(ids.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!clean.length) throw new HttpError(400, 'No se eligió ningún pedido');
+  const getProof = db.prepare('SELECT payment_proof FROM orders WHERE id = ?');
+  const proofs = clean.map((id) => getProof.get(id)?.payment_proof).filter(Boolean);
+  const deleted = transaction(() => {
+    const del = db.prepare('DELETE FROM orders WHERE id = ?');
+    let n = 0;
+    for (const id of clean) n += Number(del.run(id).changes);
+    // Si ya no queda ningún pedido, la numeración vuelve a empezar en #1.
+    if (!db.prepare('SELECT 1 FROM orders LIMIT 1').get()) {
+      db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('orders', 'order_items', 'order_history')").run();
+    }
+    return n;
+  });
+  for (const url of proofs) {
+    if (url.startsWith('/uploads/')) fs.rmSync(path.join(UPLOAD_DIR, path.basename(url)), { force: true });
+  }
+  return deleted;
+}
+
+route('DELETE', '/api/orders/:id', async (ctx) => {
+  requireAdmin(ctx);
+  const deleted = deleteOrders([ctx.params.id]);
+  if (!deleted) throw new HttpError(404, 'Pedido no encontrado');
+  return { deleted };
+});
+
+route('POST', '/api/admin/orders/delete', async (ctx) => {
+  requireAdmin(ctx);
+  if (!Array.isArray(ctx.body.ids)) throw new HttpError(400, 'No se eligió ningún pedido');
+  return { deleted: deleteOrders(ctx.body.ids.slice(0, 1000)) };
+});
+
 route('PATCH', '/api/orders/:id/payment', async (ctx) => {
   requireAdmin(ctx);
   const id = Number(ctx.params.id);
