@@ -39,6 +39,14 @@ Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con
 
 Con el celular conectado al **mismo Wi-Fi** que la computadora, abre la dirección que aparece en la ventana negra bajo *"Desde tu celular"* (por ejemplo `http://192.168.1.45:3000`). La primera vez, Windows pregunta si permite a Node.js usar la red: marca **Redes privadas** y presiona **Permitir**. Si el celular no carga, dale doble clic a **`PERMITIR-CELULAR.bat`** (abre el puerto 3000 en el Firewall de Windows; pide permiso de administrador).
 
+### Enlace público para cualquier celular (gratis)
+
+Cierra la ventana negra y abre la página con **`COMPARTIR.bat`** (Windows) o **`compartir.command`** (Mac) en lugar de INICIAR. La primera vez descarga el programa de Cloudflare (gratis, sin cuenta) y crea un enlace del tipo `https://algo.trycloudflare.com` que funciona en cualquier celular, con Wi-Fi o datos móviles. El enlace aparece en la ventana negra y en **Administración → Pagos y cuenta**, con botones para copiarlo o enviarlo por WhatsApp.
+
+- Solo funciona mientras la computadora y la ventana negra estén encendidas.
+- El enlace cambia cada vez que abres COMPARTIR.
+- Cualquiera con el enlace puede ver la página: **cambia la contraseña `admin123`** antes de compartirlo.
+
 ### Dónde quedan tus datos
 
 Perfumes, vendedores, pedidos, fotos y comprobantes se guardan en la carpeta **`DistintoSCZ-datos`** dentro de tu usuario (en Windows: `C:\Users\TuNombre\DistintoSCZ-datos`). Si Windows o el antivirus no dejan escribir ahí, se usa `%LOCALAPPDATA%\DistintoSCZ-datos`, y como último recurso las carpetas `data` y `uploads` de la propia página. La ventana negra muestra siempre dónde se están guardando. Está fuera de la carpeta de la página, así que puedes descargar versiones nuevas sin perder nada. Haz copias de esa carpeta de vez en cuando.

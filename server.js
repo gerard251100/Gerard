@@ -378,6 +378,17 @@ function getSettings() {
 
 route('GET', '/api/settings', async () => ({ settings: getSettings() }));
 
+// Direcciones para abrir la página desde el celular: red local y enlace público (COMPARTIR.bat).
+let publicUrl = null;
+route('GET', '/api/admin/share', async (ctx) => {
+  requireAdmin(ctx);
+  return {
+    sharing: Boolean(process.env.SHARE),
+    public: publicUrl,
+    lan: lanAddresses().map((ip) => `http://${ip}:${PORT}`),
+  };
+});
+
 route('PUT', '/api/admin/settings', async (ctx) => {
   requireAdmin(ctx);
   const upsert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
@@ -732,6 +743,11 @@ server.on('error', (err) => {
     console.log('');
     console.log('  La pagina ya esta encendida en otra ventana.');
     console.log(`  Abrela en el navegador: ${SITE_URL}`);
+    if (process.env.SHARE) {
+      console.log('');
+      console.log('  Para crear el enlace publico, CIERRA la otra ventana negra');
+      console.log('  y vuelve a abrir COMPARTIR.bat.');
+    }
     console.log('');
     if (process.env.OPEN_BROWSER) openBrowser(SITE_URL);
     process.exitCode = 0;
@@ -771,5 +787,59 @@ server.listen(PORT, () => {
   console.log(`   Tus datos se guardan en: ${STORE_DIR}`);
   console.log('  ============================================');
   console.log('');
-  if (process.env.OPEN_BROWSER) openBrowser(SITE_URL);
+  if (process.env.OPEN_BROWSER) openBrowser(SITE_URL + (process.env.SHARE ? '/#/admin' : ''));
+  if (process.env.SHARE) startTunnel();
 });
+
+// Enlace público temporal con Cloudflare (gratis, sin cuenta). Lo usa COMPARTIR.bat.
+function startTunnel() {
+  const { spawn } = require('node:child_process');
+  const exe = process.env.CLOUDFLARED ||
+    path.join(__dirname, 'tools', process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared');
+  if (!fs.existsSync(exe)) {
+    console.log('  No se encontro el programa de Cloudflare. Abre la pagina con COMPARTIR.bat.');
+    return;
+  }
+  console.log('  Creando el enlace publico... (puede tardar unos segundos)');
+  const child = spawn(exe, ['tunnel', '--no-autoupdate', '--url', `http://localhost:${PORT}`], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  const waiting = setTimeout(() => {
+    if (publicUrl) return;
+    console.log('');
+    console.log('  El enlace publico esta tardando. Revisa tu conexion a internet');
+    console.log('  o que el antivirus no bloquee "cloudflared".');
+    console.log('');
+  }, 45000);
+  const onOutput = (chunk) => {
+    const match = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/.exec(String(chunk));
+    if (!match || publicUrl) return;
+    publicUrl = match[0];
+    clearTimeout(waiting);
+    console.log('');
+    console.log('  ============================================');
+    console.log('   ENLACE PUBLICO (abre desde cualquier celular,');
+    console.log('   con Wi-Fi o con datos moviles):');
+    console.log('');
+    console.log(`     ${publicUrl}`);
+    console.log('');
+    console.log('   Tambien lo ves en Administracion > Pagos y cuenta.');
+    console.log('   Cambia cada vez que abres COMPARTIR.bat y solo');
+    console.log('   funciona mientras esta ventana este abierta.');
+    console.log('  ============================================');
+    console.log('');
+  };
+  child.stdout.on('data', onOutput);
+  child.stderr.on('data', onOutput);
+  child.on('error', (err) => console.log(`  No se pudo iniciar Cloudflare: ${err.message}`));
+  child.on('exit', (code) => {
+    clearTimeout(waiting);
+    if (publicUrl) console.log('  El enlace publico se cerro.');
+    else console.log(`  No se pudo crear el enlace publico (codigo ${code}). Revisa tu conexion a internet.`);
+    publicUrl = null;
+  });
+  const stop = () => { try { child.kill(); } catch { /* ya cerrado */ } };
+  process.on('exit', stop);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { stop(); process.exit(0); });
+}

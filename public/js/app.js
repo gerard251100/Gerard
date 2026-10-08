@@ -1163,10 +1163,52 @@ async function adminOrders(body, _s, filter = '', source = '') {
   }));
 }
 
+// Tarjeta "Ver en el celular": enlace público (COMPARTIR.bat) y direcciones de la red local.
+async function renderShareCard(card) {
+  if (!card.isConnected) return;
+  let share;
+  try { share = await api('/api/admin/share'); } catch { return; }
+  const linkRow = (url) => `
+    <div class="share-link">
+      <code>${esc(url)}</code>
+      <div class="btn-row">
+        <button class="btn sm" data-copy="${esc(url)}">Copiar</button>
+        <a class="btn sm" href="${esc(`https://wa.me/?text=${encodeURIComponent(`Distinto SCZ: ${url}`)}`)}" target="_blank" rel="noopener">Enviar por WhatsApp</a>
+      </div>
+    </div>`;
+  let publicPart;
+  if (share.public) {
+    publicPart = `
+      <p class="small muted" style="margin:0">Ábrelo en cualquier celular, con Wi-Fi o datos móviles. Puedes mandárselo a clientes y vendedores.
+        Funciona mientras la ventana negra esté abierta y cambia cada vez que abres <strong style="color:var(--fg)">COMPARTIR.bat</strong>.</p>
+      ${linkRow(share.public)}`;
+  } else if (share.sharing) {
+    publicPart = '<p class="muted" style="margin:0">Creando el enlace público… espera unos segundos.</p>';
+    setTimeout(() => renderShareCard(card), 3000);
+  } else {
+    publicPart = `
+      <p class="small muted" style="margin:0">Para abrir la página desde cualquier celular (aunque no esté en tu Wi-Fi), cierra la ventana negra
+        y enciende la página con <strong style="color:var(--fg)">COMPARTIR.bat</strong> en lugar de INICIAR.bat. Aquí aparecerá el enlace.</p>`;
+  }
+  card.innerHTML = `
+    <div class="eyebrow" style="margin:0">Ver en el celular</div>
+    <h3 style="margin:0">Enlace público</h3>
+    ${publicPart}
+    ${share.lan.length ? `
+      <details class="share-lan">
+        <summary class="small muted">Dirección en tu red Wi-Fi (solo funciona si el celular está en la misma red)</summary>
+        ${share.lan.map(linkRow).join('')}
+      </details>` : ''}`;
+  $$('[data-copy]', card).forEach((b) => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); toast('Enlace copiado'); } catch { prompt('Copia este enlace:', b.dataset.copy); }
+  }));
+}
+
 async function adminAccount(body) {
   settingsCache = null;
   const settings = await getSettings();
   body.innerHTML = `
+    <div class="card share-card" id="shareCard"></div>
     <div class="account-grid">
       <form class="card form" id="storeForm">
         <h3>Pagos de la tienda</h3>
@@ -1185,6 +1227,7 @@ async function adminAccount(body) {
         <button class="btn solid" type="submit">Guardar</button>
       </form>
     </div>`;
+  renderShareCard($('#shareCard'));
   let newQr = null;
   $('#qrFile').addEventListener('change', (e) => withBusy(null, async () => {
     const data = await readImageFile(e.target.files[0]);
