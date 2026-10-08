@@ -1,6 +1,7 @@
 @echo off
 title Distinto SCZ
 cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\sin-pausa.ps1" >nul 2>nul
 
 where node >nul 2>nul
 if errorlevel 1 (
