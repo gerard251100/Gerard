@@ -223,18 +223,66 @@ function renderNav() {
     html += '<button class="link" data-action="logout">Salir</button>';
   }
   nav.innerHTML = html;
+  renderTabbar(route);
 }
+
+// Barra de navegación inferior para celulares (estilo app).
+const ICONS = {
+  home: '<path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/>',
+  grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1"/>',
+  bag: '<path d="M5 8h14l-1 13H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
+  receipt: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
+  panel: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  out: '<path d="M15 4h4v16h-4M10 16l4-4-4-4M14 12H3"/>',
+};
+function renderTabbar(route) {
+  const bar = $('#tabbar');
+  const n = cart.count();
+  const item = (href, icon, label, { badge: count = 0, action = '', match = [] } = {}) => {
+    const active = route === href || match.some((m) => route.startsWith(m));
+    const attrs = action ? `href="#" data-action="${action}"` : `href="${href}"`;
+    return `<a ${attrs} class="tab-item ${active ? 'active' : ''}" ${icon === 'bag' ? 'data-cart-icon' : ''}>
+      <svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[icon]}</svg>
+      ${count ? `<span class="tab-badge">${count}</span>` : ''}
+      <span>${label}</span></a>`;
+  };
+  let html = item('#/', 'home', 'Inicio') + item('#/catalogo', 'grid', 'Catálogo');
+  if (!state.user) {
+    html += item('#/carrito', 'bag', 'Carrito', { badge: n });
+    html += item('#/mis-pedidos', 'receipt', 'Pedidos', { match: ['#/pedido/'] });
+    html += item('#/login', 'user', 'Cuenta', { match: ['#/registro'] });
+  } else if (state.user.role === 'admin') {
+    html += item('#/carrito', 'bag', 'Carrito', { badge: n, match: ['#/pedido/'] });
+    html += item('#/admin', 'panel', 'Admin');
+    html += item('#/', 'out', 'Salir', { action: 'logout' });
+  } else {
+    html += item('#/panel/carrito', 'bag', 'Carrito', { badge: n });
+    html += item('#/panel', 'panel', 'Mi panel', { match: ['#/panel/pedidos', '#/panel/ranking'] });
+    html += item('#/', 'out', 'Salir', { action: 'logout' });
+  }
+  bar.innerHTML = html;
+}
+
+async function logout() {
+  await api('/api/logout', { method: 'POST' }).catch(() => {});
+  state.user = null;
+  $('#nav').classList.remove('open');
+  toast('Sesión cerrada');
+  location.hash = '#/';
+  renderNav();
+}
+
+$('#tabbar').addEventListener('click', (e) => {
+  const a = e.target.closest('[data-action="logout"]');
+  if (!a) return;
+  e.preventDefault();
+  if (confirm('¿Cerrar sesión?')) logout();
+});
 
 $('#nav').addEventListener('click', async (e) => {
   if (e.target.closest('a')) $('#nav').classList.remove('open');
-  if (e.target.dataset.action === 'logout') {
-    await api('/api/logout', { method: 'POST' }).catch(() => {});
-    state.user = null;
-    $('#nav').classList.remove('open');
-    toast('Sesión cerrada');
-    location.hash = '#/';
-    renderNav();
-  }
+  if (e.target.dataset.action === 'logout') await logout();
 });
 $('#menuToggle').addEventListener('click', () => $('#nav').classList.toggle('open'));
 
@@ -323,7 +371,7 @@ async function viewHome() {
   typeWriter($('#typed'), 'Tu fragancia, tu sello');
   const { perfumes } = await api('/api/catalog');
   $('#featured').innerHTML = perfumes.length
-    ? `<div class="grid">${perfumes.slice(0, 8).map((p) => productCard(p, { mode })).join('')}</div>`
+    ? `<div class="grid carousel">${perfumes.slice(0, 8).map((p) => productCard(p, { mode })).join('')}</div>`
     : '<div class="empty">Pronto publicaremos nuestro catálogo.</div>';
 }
 
@@ -387,6 +435,13 @@ app.addEventListener('click', (e) => {
   }
   const qty = Math.max(1, Math.min(999, Math.floor(Number(input.value)) || 1));
   cart.add(btn.dataset.add, qty);
+  // Pequeña animación en el ícono del carrito y en el botón.
+  for (const el of [$('[data-cart-icon]'), btn]) {
+    if (!el) continue;
+    el.classList.remove('bump');
+    void el.offsetWidth;
+    el.classList.add('bump');
+  }
   input.value = 1;
   const tab = state.user?.role === 'vendor' && $$('.tab')[1];
   if (tab) tab.textContent = `Carrito (${cart.count()})`;
@@ -907,18 +962,17 @@ async function rankingView(body, month = currentMonth()) {
         </div>`).join('')}
     </div>
     ${ranking.length ? `
-      <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>Vendedor</th><th>Ciudad</th><th class="num">Pedidos</th><th class="num">Unidades</th><th class="num">Ventas</th>${isAdmin ? '<th class="num">Comisión</th>' : ''}</tr></thead>
+      <div class="table-wrap"><table class="stack">
+        <thead><tr><th>Vendedor</th><th>Ciudad</th><th class="num">Pedidos</th><th class="num">Unidades</th><th class="num">Ventas</th>${isAdmin ? '<th class="num">Comisión</th>' : ''}</tr></thead>
         <tbody>
           ${ranking.map((r) => `
             <tr class="${r.me ? 'me' : ''}">
-              <td>${r.position}</td>
-              <td>${esc(r.name)}${r.me ? ' <span class="badge">Tú</span>' : ''}</td>
-              <td class="muted">${esc(r.city || '')}</td>
-              <td class="num">${r.orders}</td>
-              <td class="num">${r.units}</td>
-              <td class="num">${money(r.sales)}</td>
-              ${isAdmin ? `<td class="num" style="color:var(--gold)">${money(r.commission)}</td>` : ''}
+              <td class="cell-title" data-label="#">${r.position}. ${esc(r.name)}${r.me ? ' <span class="badge">Tú</span>' : ''}</td>
+              <td class="muted" data-label="Ciudad">${esc(r.city || '—')}</td>
+              <td class="num" data-label="Pedidos">${r.orders}</td>
+              <td class="num" data-label="Unidades">${r.units}</td>
+              <td class="num" data-label="Ventas">${money(r.sales)}</td>
+              ${isAdmin ? `<td class="num" data-label="Comisión" style="color:var(--gold)">${money(r.commission)}</td>` : ''}
             </tr>`).join('')}
         </tbody>
       </table></div>`
@@ -980,17 +1034,17 @@ async function adminVendors(body, _s, filter = '') {
         .map(([k, l]) => `<button class="chip ${k === filter ? 'active' : ''}" data-filter="${k}">${l}</button>`).join('')}
     </div>
     ${vendors.length ? `
-      <div class="table-wrap"><table>
+      <div class="table-wrap"><table class="stack">
         <thead><tr><th>Vendedor</th><th>Contacto</th><th>Mensaje</th><th>Registro</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
         <tbody>
           ${vendors.map((v) => `
             <tr>
-              <td><strong>${esc(v.name)}</strong><div class="small muted">${esc(v.city || '')}</div></td>
-              <td class="small">${esc(v.email)}<div class="muted">${esc(v.phone || '')}</div></td>
-              <td class="small muted" style="max-width:260px">${esc(v.message || '—')}</td>
-              <td class="small muted">${fmtDate(v.created_at)}</td>
-              <td>${badge(v.status, VENDOR_STATUS_LABELS)}<div class="small muted">${v.orders} pedidos</div></td>
-              <td class="num">
+              <td class="cell-title"><strong>${esc(v.name)}</strong><div class="small muted">${esc(v.city || '')}</div></td>
+              <td class="small" data-label="Contacto">${esc(v.email)}<div class="muted">${esc(v.phone || '')}</div></td>
+              <td class="small muted" data-label="Mensaje" style="max-width:260px">${esc(v.message || '—')}</td>
+              <td class="small muted" data-label="Registro">${fmtDate(v.created_at)}</td>
+              <td data-label="Estado">${badge(v.status, VENDOR_STATUS_LABELS)}<div class="small muted">${v.orders} pedidos</div></td>
+              <td class="num cell-actions">
                 <div class="btn-row" style="justify-content:flex-end">
                   ${v.status !== 'approved' ? `<button class="btn sm ok" data-set="approved" data-id="${v.id}">Aceptar</button>` : ''}
                   ${v.status !== 'rejected' ? `<button class="btn sm danger" data-set="rejected" data-id="${v.id}">${v.status === 'approved' ? 'Suspender' : 'Rechazar'}</button>` : ''}
@@ -1025,18 +1079,18 @@ async function adminPerfumes(body) {
       <button class="btn solid" id="newPerfume">+ Agregar perfume</button>
     </div>
     ${perfumes.length ? `
-      <div class="table-wrap"><table>
+      <div class="table-wrap"><table class="stack">
         <thead><tr><th></th><th>Perfume</th><th>Categoría</th><th class="num">Precio</th><th class="num">Comisión</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
         <tbody>
           ${perfumes.map((p) => `
             <tr>
-              <td>${p.image ? `<img class="thumb" src="${esc(p.image)}" alt="">` : '<div class="thumb"></div>'}</td>
-              <td><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}</div></td>
-              <td class="muted">${esc(p.category || '—')}</td>
-              <td class="num">${money(p.suggested_price)}</td>
-              <td class="num" style="color:var(--gold)">${money(p.commission)}</td>
-              <td>${p.active ? '<span class="badge approved">Publicado</span>' : '<span class="badge">Oculto</span>'}</td>
-              <td class="num"><div class="btn-row" style="justify-content:flex-end">
+              <td class="cell-thumb">${p.image ? `<img class="thumb" src="${esc(p.image)}" alt="">` : '<div class="thumb"></div>'}</td>
+              <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}</div></td>
+              <td class="muted" data-label="Categoría">${esc(p.category || '—')}</td>
+              <td class="num" data-label="Precio">${money(p.suggested_price)}</td>
+              <td class="num" data-label="Comisión" style="color:var(--gold)">${money(p.commission)}</td>
+              <td data-label="Estado">${p.active ? '<span class="badge approved">Publicado</span>' : '<span class="badge">Oculto</span>'}</td>
+              <td class="num cell-actions"><div class="btn-row" style="justify-content:flex-end">
                 <button class="btn sm" data-edit="${p.id}">Editar</button>
                 <button class="btn sm ghost danger" data-del="${p.id}">Eliminar</button>
               </div></td>

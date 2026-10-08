@@ -2,7 +2,7 @@
 
 *Tu fragancia, tu sello.*
 
-Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con el logo de la marca y animaciones (intro con el logo, aparición de elementos al hacer scroll, contadores animados, marquesina y transiciones entre páginas; se desactivan si el sistema pide reducir el movimiento). Incluye:
+Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, adaptado al celular como una app (barra de navegación inferior, catálogo en 2 columnas, carruseles y ventanas que suben desde abajo), con el logo de la marca y animaciones (intro con el logo, aparición de elementos al hacer scroll, contadores animados, marquesina y transiciones entre páginas; se desactivan si el sistema pide reducir el movimiento). Incluye:
 
 - **Tienda para clientes**:
   - Catálogo con precios, búsqueda y filtro por categoría.
