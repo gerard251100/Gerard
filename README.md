@@ -1,1 +1,75 @@
-# Gerard
+# Perfumería: catálogo y plataforma de vendedores
+
+Sitio web en negro con líneas blancas para la perfumería. Incluye:
+
+- **Catálogo público** de perfumes, con búsqueda y filtro por categoría.
+- **Registro de vendedores**: las personas envían su solicitud y el administrador la **acepta o rechaza**.
+- **Panel del vendedor** (solo cuando está aprobado):
+  - **Precios y comisiones**: precio sugerido de venta y comisión por cada perfume, que define el administrador.
+  - **Carrito**: arma un pedido con el nombre del cliente, su teléfono, la dirección y notas.
+  - **Mis pedidos**: estado de cada pedido con barra de progreso e historial.
+  - **Ranking** mensual de vendedores, con podio para los 3 primeros.
+- **Panel del administrador**:
+  - Resumen con indicadores.
+  - Solicitudes de vendedores: aceptar, rechazar, suspender o eliminar.
+  - Catálogo: agregar, editar, ocultar o eliminar perfumes, con imagen por URL o archivo subido.
+  - Pedidos: cambiar el estado (Pendiente, Confirmado, En preparación, Enviado, Entregado o Cancelado) con una nota para el vendedor.
+  - Ranking por mes, con la comisión de cada vendedor.
+  - Cambio de contraseña.
+
+## Requisitos
+
+- **Node.js 22.13 o superior**. No hace falta instalar dependencias: el proyecto usa solo módulos integrados de Node, entre ellos la base de datos SQLite (`node:sqlite`).
+
+## Cómo ejecutarlo
+
+```bash
+npm start
+```
+
+Abre <http://localhost:3000>.
+
+La primera vez se crea la cuenta de administrador:
+
+- Correo: `admin@perfumeria.com`
+- Contraseña: `admin123`
+
+**Cámbiala** apenas ingreses (Administración → Cuenta), o defínela antes del primer arranque con variables de entorno.
+
+### Variables de entorno (opcionales)
+
+| Variable         | Uso                                                    | Por defecto              |
+|------------------|--------------------------------------------------------|--------------------------|
+| `PORT`           | Puerto del servidor                                    | `3000`                   |
+| `ADMIN_EMAIL`    | Correo del administrador (solo en el primer arranque)  | `admin@perfumeria.com`   |
+| `ADMIN_PASSWORD` | Contraseña del administrador (solo en el primer arranque) | `admin123`            |
+| `DATA_DIR`       | Carpeta de la base de datos                            | `./data`                 |
+| `UPLOAD_DIR`     | Carpeta de imágenes subidas                            | `./uploads`              |
+| `TZ`             | Zona horaria para calcular el mes del ranking         | la del servidor          |
+
+Ejemplo: `TZ=America/Lima ADMIN_PASSWORD=miClaveSegura npm start`
+
+## Cómo funciona
+
+1. Un vendedor se registra en **Sé vendedor**. Hasta que lo aprueben, no puede ingresar.
+2. El administrador lo acepta en **Administración → Vendedores**.
+3. El vendedor ingresa, ve precios y comisiones, agrega perfumes al carrito y envía el pedido con el nombre del cliente.
+4. El administrador actualiza el estado del pedido en **Administración → Pedidos**, y el vendedor lo ve en **Mis pedidos**.
+5. **Ranking**: solo cuentan los pedidos **entregados**. Se ordena por monto vendido en el mes en que se creó el pedido. Los vendedores no ven la comisión de los demás.
+
+El precio y la comisión se guardan en cada pedido al momento de crearlo, así que cambiar los precios del catálogo no altera pedidos anteriores.
+
+## Estructura
+
+```
+server.js          Servidor HTTP y API
+src/db.js          Esquema de la base de datos SQLite y cuenta inicial del administrador
+src/security.js    Hash de contraseñas (scrypt) y tokens de sesión
+public/            Frontend (HTML, CSS y JavaScript sin frameworks)
+data/              Base de datos (se crea sola y no se sube a git)
+uploads/           Imágenes de perfumes subidas
+```
+
+## Para publicarlo
+
+Necesitas un servidor o un servicio que ejecute Node.js (Render, Railway, Fly.io o un VPS) con **disco persistente** para `data/` y `uploads/`. Respalda periódicamente el archivo `data/perfumeria.db`.

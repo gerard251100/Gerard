@@ -1,0 +1,114 @@
+'use strict';
+
+const path = require('node:path');
+const fs = require('node:fs');
+const { DatabaseSync } = require('node:sqlite');
+const { hashPassword } = require('./security');
+
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const db = new DatabaseSync(process.env.DB_FILE || path.join(DATA_DIR, 'perfumeria.db'));
+
+db.exec(`
+  PRAGMA journal_mode = WAL;
+  PRAGMA foreign_keys = ON;
+
+  CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    email         TEXT NOT NULL UNIQUE,
+    phone         TEXT,
+    city          TEXT,
+    message       TEXT,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL CHECK (role IN ('admin', 'vendor')),
+    status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    reviewed_at   TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    token      TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS perfumes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    brand           TEXT,
+    category        TEXT,
+    size_ml         INTEGER,
+    description     TEXT,
+    image           TEXT,
+    suggested_price REAL NOT NULL DEFAULT 0,
+    commission      REAL NOT NULL DEFAULT 0,
+    active          INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS orders (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    client_name      TEXT NOT NULL,
+    client_phone     TEXT,
+    client_address   TEXT,
+    notes            TEXT,
+    status           TEXT NOT NULL DEFAULT 'pendiente',
+    admin_note       TEXT,
+    total            REAL NOT NULL DEFAULT 0,
+    total_commission REAL NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS order_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id        INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    perfume_id      INTEGER REFERENCES perfumes(id) ON DELETE SET NULL,
+    perfume_name    TEXT NOT NULL,
+    quantity        INTEGER NOT NULL,
+    unit_price      REAL NOT NULL,
+    unit_commission REAL NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS order_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id   INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    status     TEXT NOT NULL,
+    note       TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_id);
+  CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
+  CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id);
+`);
+
+// Create the administrator account on first start.
+const adminEmail = (process.env.ADMIN_EMAIL || 'admin@perfumeria.com').toLowerCase();
+if (!db.prepare("SELECT id FROM users WHERE role = 'admin'").get()) {
+  const password = process.env.ADMIN_PASSWORD || 'admin123';
+  db.prepare(
+    "INSERT INTO users (name, email, password_hash, role, status) VALUES (?, ?, ?, 'admin', 'approved')"
+  ).run('Administrador', adminEmail, hashPassword(password));
+  console.log(`Cuenta de administrador creada: ${adminEmail}`);
+  if (!process.env.ADMIN_PASSWORD) {
+    console.log('  Contraseña por defecto: admin123  (cámbiala desde el panel de administración)');
+  }
+}
+
+function transaction(fn) {
+  db.exec('BEGIN');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+module.exports = { db, transaction };
