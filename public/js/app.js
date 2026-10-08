@@ -3,7 +3,7 @@
 /* =================================================================
    Configuración
    ================================================================= */
-const CURRENCY = '$';
+const CURRENCY = 'Bs ';
 const STATUS_LABELS = {
   pendiente: 'Pendiente',
   confirmado: 'Confirmado',
