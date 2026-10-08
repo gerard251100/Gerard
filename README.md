@@ -113,6 +113,7 @@ src/security.js    Hash de contraseñas (scrypt) y tokens de sesión
 public/            Frontend (HTML, CSS y JavaScript sin frameworks)
 public/img/        Logo (emblema con fondo transparente) y favicon
 src/paths.js       Ubicación de los datos (~/DistintoSCZ-datos) y traslado desde versiones anteriores
+src/tunnel.js      Enlace público con Cloudflare: descarga cloudflared y crea el enlace (COMPARTIR.bat)
 reset-admin.js     Restablece la contraseña del administrador (RESTABLECER-CLAVE.bat)
 ```
 
