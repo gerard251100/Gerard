@@ -15,6 +15,7 @@ const MAX_BODY = 6 * 1024 * 1024;
 
 const ORDER_STATUSES = ['pendiente', 'confirmado', 'preparando', 'enviado', 'entregado', 'cancelado'];
 const VENDOR_STATUSES = ['pending', 'approved', 'rejected'];
+const PAYMENT_STATUSES = ['pendiente', 'pagado'];
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -209,7 +210,9 @@ route('POST', '/api/me/password', async (ctx) => {
 const PUBLIC_FIELDS = 'id, name, brand, category, size_ml, description, image';
 
 route('GET', '/api/catalog', async () => ({
-  perfumes: db.prepare(`SELECT ${PUBLIC_FIELDS} FROM perfumes WHERE active = 1 ORDER BY brand, name`).all(),
+  perfumes: db
+    .prepare(`SELECT ${PUBLIC_FIELDS}, suggested_price AS price FROM perfumes WHERE active = 1 ORDER BY brand, name`)
+    .all(),
 }));
 
 route('GET', '/api/vendor/perfumes', async (ctx) => {
@@ -227,7 +230,7 @@ function loadOrder(id) {
   const order = db
     .prepare(
       `SELECT o.*, u.name AS vendor_name, u.email AS vendor_email, u.phone AS vendor_phone
-       FROM orders o JOIN users u ON u.id = o.vendor_id WHERE o.id = ?`
+       FROM orders o LEFT JOIN users u ON u.id = o.vendor_id WHERE o.id = ?`
     )
     .get(id);
   if (!order) return null;
@@ -236,12 +239,14 @@ function loadOrder(id) {
   return order;
 }
 
-route('POST', '/api/orders', async (ctx) => {
-  const vendor = requireVendor(ctx);
-  const b = ctx.body;
+// Crea un pedido. vendor = null para los pedidos directos de clientes (sin comisión).
+function createOrder(b, vendor) {
   const clientName = text(b.client_name, 120);
-  if (!clientName) throw new HttpError(400, 'El nombre del cliente es obligatorio');
+  if (!clientName) throw new HttpError(400, vendor ? 'El nombre del cliente es obligatorio' : 'Escribe tu nombre');
+  const phone = text(b.client_phone, 40);
+  if (!vendor && !phone) throw new HttpError(400, 'Escribe tu número de celular para coordinar la entrega');
   if (!Array.isArray(b.items) || !b.items.length) throw new HttpError(400, 'El carrito está vacío');
+  if (b.items.length > 50) throw new HttpError(400, 'Demasiados productos en un solo pedido');
 
   const getPerfume = db.prepare('SELECT * FROM perfumes WHERE id = ? AND active = 1');
   const items = b.items.map((it) => {
@@ -249,22 +254,25 @@ route('POST', '/api/orders', async (ctx) => {
     if (!Number.isFinite(qty) || qty < 1 || qty > 999) throw new HttpError(400, 'Cantidad inválida');
     const p = getPerfume.get(Number(it.perfume_id));
     if (!p) throw new HttpError(400, 'Uno de los perfumes ya no está disponible');
-    return { p, qty };
+    return { p, qty, commission: vendor ? p.commission : 0 };
   });
 
-  const total = items.reduce((s, { p, qty }) => s + p.suggested_price * qty, 0);
-  const totalCommission = items.reduce((s, { p, qty }) => s + p.commission * qty, 0);
+  const total = items.reduce((sum, { p, qty }) => sum + p.suggested_price * qty, 0);
+  const totalCommission = items.reduce((sum, { commission, qty }) => sum + commission * qty, 0);
+  const token = vendor ? null : newToken();
 
-  const id = transaction(() => {
+  return transaction(() => {
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO orders (vendor_id, client_name, client_phone, client_address, notes, total, total_commission)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO orders (vendor_id, source, track_token, client_name, client_phone, client_address, notes, total, total_commission)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
-        vendor.id,
+        vendor ? vendor.id : null,
+        vendor ? 'vendedor' : 'cliente',
+        token,
         clientName,
-        text(b.client_phone, 40),
+        phone,
         text(b.client_address, 250),
         text(b.notes, 1000),
         Math.round(total * 100) / 100,
@@ -274,16 +282,109 @@ route('POST', '/api/orders', async (ctx) => {
       `INSERT INTO order_items (order_id, perfume_id, perfume_name, quantity, unit_price, unit_commission)
        VALUES (?, ?, ?, ?, ?, ?)`
     );
-    for (const { p, qty } of items) {
+    for (const { p, qty, commission } of items) {
       const label = [p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · ');
-      insertItem.run(lastInsertRowid, p.id, label, qty, p.suggested_price, p.commission);
+      insertItem.run(lastInsertRowid, p.id, label, qty, p.suggested_price, commission);
     }
     db.prepare(`INSERT INTO order_history (order_id, status, note) VALUES (?, 'pendiente', 'Pedido creado')`).run(
       lastInsertRowid
     );
     return lastInsertRowid;
   });
+}
+
+route('POST', '/api/orders', async (ctx) => {
+  const vendor = requireVendor(ctx);
+  return { order: loadOrder(createOrder(ctx.body, vendor)) };
+});
+
+// ---- Pedidos directos de clientes (sin cuenta)
+
+function publicOrder(o) {
+  return {
+    id: o.id,
+    token: o.track_token,
+    client_name: o.client_name,
+    client_phone: o.client_phone,
+    client_address: o.client_address,
+    notes: o.notes,
+    status: o.status,
+    admin_note: o.admin_note,
+    payment_status: o.payment_status,
+    has_proof: Boolean(o.payment_proof),
+    total: o.total,
+    created_at: o.created_at,
+    items: o.items.map(({ perfume_name, quantity, unit_price }) => ({ perfume_name, quantity, unit_price })),
+    history: o.history.map(({ status, note, created_at }) => ({ status, note, created_at })),
+  };
+}
+
+function orderByToken(token) {
+  const row = /^[a-f0-9]{64}$/.test(token) && db.prepare('SELECT id FROM orders WHERE track_token = ?').get(token);
+  if (!row) throw new HttpError(404, 'Pedido no encontrado');
+  return loadOrder(row.id);
+}
+
+route('POST', '/api/public/orders', async (ctx) => {
+  const id = createOrder(ctx.body, null);
+  return { order: publicOrder(loadOrder(id)) };
+});
+
+route('GET', '/api/public/orders/:token', async (ctx) => ({ order: publicOrder(orderByToken(ctx.params.token)) }));
+
+route('POST', '/api/public/orders/:token/proof', async (ctx) => {
+  const order = orderByToken(ctx.params.token);
+  if (order.payment_status === 'pagado') throw new HttpError(400, 'Este pedido ya figura como pagado');
+  const url = saveImage(ctx.body.data);
+  transaction(() => {
+    db.prepare(`UPDATE orders SET payment_proof = ?, updated_at = datetime('now') WHERE id = ?`).run(url, order.id);
+    db.prepare(`INSERT INTO order_history (order_id, status, note) VALUES (?, ?, 'El cliente envió su comprobante de pago')`).run(
+      order.id,
+      order.status
+    );
+  });
+  return { order: publicOrder(loadOrder(order.id)) };
+});
+
+route('PATCH', '/api/orders/:id/payment', async (ctx) => {
+  requireAdmin(ctx);
+  const id = Number(ctx.params.id);
+  const status = text(ctx.body.payment_status, 20);
+  if (!PAYMENT_STATUSES.includes(status)) throw new HttpError(400, 'Estado de pago inválido');
+  const order = db.prepare('SELECT status FROM orders WHERE id = ?').get(id);
+  if (!order) throw new HttpError(404, 'Pedido no encontrado');
+  transaction(() => {
+    db.prepare(`UPDATE orders SET payment_status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, id);
+    db.prepare('INSERT INTO order_history (order_id, status, note) VALUES (?, ?, ?)').run(
+      id,
+      order.status,
+      status === 'pagado' ? 'Pago confirmado' : 'Pago marcado como pendiente'
+    );
+  });
   return { order: loadOrder(id) };
+});
+
+// ---- Ajustes de la tienda (QR de pago, WhatsApp)
+
+const SETTING_KEYS = ['payment_qr', 'whatsapp'];
+const DEFAULT_SETTINGS = { payment_qr: '/img/qr-yape.jpg', whatsapp: '' };
+
+function getSettings() {
+  const out = { ...DEFAULT_SETTINGS };
+  for (const row of db.prepare('SELECT key, value FROM settings').all()) {
+    if (SETTING_KEYS.includes(row.key) && row.value) out[row.key] = row.value;
+  }
+  return out;
+}
+
+route('GET', '/api/settings', async () => ({ settings: getSettings() }));
+
+route('PUT', '/api/admin/settings', async (ctx) => {
+  requireAdmin(ctx);
+  const upsert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+  if ('payment_qr' in ctx.body) upsert.run('payment_qr', text(ctx.body.payment_qr, 500));
+  if ('whatsapp' in ctx.body) upsert.run('whatsapp', text(ctx.body.whatsapp, 30).replace(/[^\d]/g, ''));
+  return { settings: getSettings() };
 });
 
 route('GET', '/api/orders', async (ctx) => {
@@ -302,11 +403,16 @@ route('GET', '/api/orders', async (ctx) => {
     where.push('o.status = ?');
     params.push(status);
   }
+  const source = ctx.query.get('source');
+  if (user.role === 'admin' && (source === 'cliente' || source === 'vendedor')) {
+    where.push('o.source = ?');
+    params.push(source);
+  }
   const orders = db
     .prepare(
       `SELECT o.*, u.name AS vendor_name,
               (SELECT COALESCE(SUM(quantity), 0) FROM order_items WHERE order_id = o.id) AS units
-       FROM orders o JOIN users u ON u.id = o.vendor_id
+       FROM orders o LEFT JOIN users u ON u.id = o.vendor_id
        ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
        ORDER BY o.id DESC LIMIT 500`
     )
@@ -417,6 +523,10 @@ route('GET', '/api/admin/summary', async (ctx) => {
     approvedVendors: one(`SELECT COUNT(*) FROM users WHERE role = 'vendor' AND status = 'approved'`),
     activePerfumes: one('SELECT COUNT(*) FROM perfumes WHERE active = 1'),
     openOrders: one(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('entregado', 'cancelado')`),
+    openCustomerOrders: one(`SELECT COUNT(*) FROM orders WHERE source = 'cliente' AND status NOT IN ('entregado', 'cancelado')`),
+    unpaidCustomerOrders: one(
+      `SELECT COUNT(*) FROM orders WHERE source = 'cliente' AND payment_status = 'pendiente' AND status != 'cancelado'`
+    ),
     monthSales: one(
       `SELECT COALESCE(SUM(total), 0) FROM orders WHERE status = 'entregado' AND strftime('%Y-%m', created_at, 'localtime') = ?`,
       currentMonth()
@@ -516,13 +626,17 @@ route('DELETE', '/api/admin/perfumes/:id', async (ctx) => {
 
 const IMAGE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 
-route('POST', '/api/admin/upload', async (ctx) => {
-  requireAdmin(ctx);
-  const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(String(ctx.body.data || ''));
+function saveImage(dataUrl) {
+  const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(String(dataUrl || ''));
   if (!match || !IMAGE_TYPES[match[1]]) throw new HttpError(400, 'Formato de imagen no soportado (JPG, PNG, WEBP o GIF)');
   const file = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${IMAGE_TYPES[match[1]]}`;
   fs.writeFileSync(path.join(UPLOAD_DIR, file), Buffer.from(match[2], 'base64'));
-  return { url: `/uploads/${file}` };
+  return `/uploads/${file}`;
+}
+
+route('POST', '/api/admin/upload', async (ctx) => {
+  requireAdmin(ctx);
+  return { url: saveImage(ctx.body.data) };
 });
 
 /* ---------------------------------------------------------- static files */

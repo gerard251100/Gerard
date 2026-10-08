@@ -14,6 +14,7 @@ const STATUS_LABELS = {
 };
 const PROGRESS_STEPS = ['pendiente', 'confirmado', 'preparando', 'enviado', 'entregado'];
 const VENDOR_STATUS_LABELS = { pending: 'Pendiente', approved: 'Aprobado', rejected: 'Rechazado' };
+const PAYMENT_LABELS = { pendiente: 'Pago pendiente', pagado: 'Pagado' };
 const CATEGORIES = ['Hombre', 'Mujer', 'Unisex'];
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
@@ -124,6 +125,47 @@ function badge(status, labels = STATUS_LABELS) {
   return `<span class="badge ${esc(status)}">${esc(labels[status] || status)}</span>`;
 }
 
+function payBadge(status) {
+  return `<span class="badge pay-${esc(status)}">${esc(PAYMENT_LABELS[status] || status)}</span>`;
+}
+
+// Enlace de WhatsApp; a los números bolivianos de 8 dígitos se les agrega el código 591.
+function waLink(phone, message = '') {
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 8) digits = '591' + digits;
+  return `https://wa.me/${digits}${message ? `?text=${encodeURIComponent(message)}` : ''}`;
+}
+
+function readImageFile(file, maxMb = 4) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error('Elige una imagen'));
+    if (file.size > maxMb * 1024 * 1024) return reject(new Error(`La imagen debe pesar menos de ${maxMb} MB`));
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+    reader.readAsDataURL(file);
+  });
+}
+
+let settingsCache = null;
+async function getSettings() {
+  if (!settingsCache) settingsCache = (await api('/api/settings')).settings;
+  return settingsCache;
+}
+
+// Pedidos hechos desde este navegador (clientes sin cuenta).
+const myOrders = {
+  read() {
+    try { return JSON.parse(localStorage.getItem('myOrders')) || []; } catch { return []; }
+  },
+  add(order) {
+    const list = this.read().filter((o) => o.token !== order.token);
+    list.unshift({ id: order.id, token: order.token });
+    try { localStorage.setItem('myOrders', JSON.stringify(list.slice(0, 30))); } catch { /* sin almacenamiento */ }
+  },
+};
+
 /* =================================================================
    Estado
    ================================================================= */
@@ -165,6 +207,9 @@ function renderNav() {
     `<a href="${href}" class="${route === href ? 'active' : ''}">${label}${extra}</a>`;
   let html = link('#/', 'Inicio') + link('#/catalogo', 'Catálogo');
   if (!state.user) {
+    const n = cart.count();
+    html += link('#/carrito', 'Carrito', n ? ` <span class="badge count">${n}</span>` : '');
+    if (myOrders.read().length) html += link('#/mis-pedidos', 'Mis pedidos');
     html += link('#/registro', 'Sé vendedor') + link('#/login', 'Ingresar');
   } else if (state.user.role === 'admin') {
     html += link('#/admin', 'Administración');
@@ -194,6 +239,8 @@ $('#menuToggle').addEventListener('click', () => $('#nav').classList.toggle('ope
 const routes = {
   '#/': viewHome,
   '#/catalogo': viewCatalog,
+  '#/carrito': viewShopCart,
+  '#/mis-pedidos': viewMyOrders,
   '#/registro': viewRegister,
   '#/login': viewLogin,
   '#/panel': () => viewVendor('catalogo'),
@@ -210,7 +257,7 @@ async function router() {
   app.classList.remove('page-enter');
   void app.offsetWidth; // reinicia la animación de entrada
   app.classList.add('page-enter');
-  const view = routes[route] || viewHome;
+  const view = route.startsWith('#/pedido/') ? () => viewTrack(route.slice('#/pedido/'.length)) : routes[route] || viewHome;
   try {
     await view();
   } catch (err) {
@@ -227,6 +274,7 @@ async function viewHome() {
   const panelLink = state.user
     ? `<a class="btn" href="${state.user.role === 'admin' ? '#/admin' : '#/panel'}">Ir a mi panel</a>`
     : '<a class="btn" href="#/registro">Quiero ser vendedor</a>';
+  const mode = cardMode();
   const marqueeItems = ['Distinto SCZ', '<span class="script">Tu fragancia, tu sello</span>', 'Perfumes originales', 'Hombre', 'Mujer', 'Unisex', 'Santa Cruz']
     .map((t) => (t.startsWith('<') ? t : `<span>${t}</span>`)).join('<span class="dot">◇</span>');
   app.innerHTML = `
@@ -236,9 +284,9 @@ async function viewHome() {
         <h1 class="hero-name"><span class="word" style="animation-delay:.15s">DISTINTO</span> <span class="word" style="animation-delay:.35s">SCZ</span></h1>
         <div class="hero-tag"><span class="typed" id="typed"></span></div>
         <div class="hero-rule"></div>
-        <p>Fragancias originales que hablan por ti. ¿Quieres generar ingresos? Únete a nuestro equipo de vendedores y gana comisión por cada venta.</p>
+        <p>Fragancias originales que hablan por ti. Elige tu perfume, haz tu pedido en línea y paga al instante con QR.</p>
         <div class="hero-actions">
-          <a class="btn solid" href="#/catalogo">Ver catálogo</a>
+          <a class="btn solid" href="#/catalogo">Comprar ahora</a>
           ${panelLink}
         </div>
       </div>
@@ -253,9 +301,9 @@ async function viewHome() {
     </section>
     <div class="marquee" aria-hidden="true"><div class="marquee-track">${marqueeItems}<span class="dot">◇</span>${marqueeItems}<span class="dot">◇</span></div></div>
     <div class="features">
-      <div class="feature"><div class="num">01</div><h3>Regístrate</h3><p class="muted small">Envía tu solicitud para ser vendedor. Te avisaremos cuando sea aprobada.</p></div>
-      <div class="feature"><div class="num">02</div><h3>Vende</h3><p class="muted small">Consulta precios sugeridos y tu comisión por cada perfume. Arma pedidos para tus clientes.</p></div>
-      <div class="feature"><div class="num">03</div><h3>Gana</h3><p class="muted small">Sigue el estado de tus pedidos. Cada mes premiamos a los 3 mejores vendedores.</p></div>
+      <div class="feature"><div class="num">01</div><h3>Elige</h3><p class="muted small">Explora el catálogo y agrega tus perfumes favoritos al carrito.</p></div>
+      <div class="feature"><div class="num">02</div><h3>Pide</h3><p class="muted small">Deja tu nombre y celular. No necesitas crear una cuenta.</p></div>
+      <div class="feature"><div class="num">03</div><h3>Paga con QR</h3><p class="muted small">Escanea nuestro QR, sube tu comprobante y sigue el estado de tu pedido en línea.</p></div>
     </div>
     <section class="section">
       <div class="section-head"><h2>Destacados</h2><a class="btn sm" href="#/catalogo">Ver todo</a></div>
@@ -273,7 +321,7 @@ async function viewHome() {
   typeWriter($('#typed'), 'Tu fragancia, tu sello');
   const { perfumes } = await api('/api/catalog');
   $('#featured').innerHTML = perfumes.length
-    ? `<div class="grid">${perfumes.slice(0, 8).map((p) => productCard(p)).join('')}</div>`
+    ? `<div class="grid">${perfumes.slice(0, 8).map((p) => productCard(p, { mode })).join('')}</div>`
     : '<div class="empty">Pronto publicaremos nuestro catálogo.</div>';
 }
 
@@ -289,7 +337,22 @@ function typeWriter(el, textValue, delay = 900) {
   setTimeout(tick, delay);
 }
 
-function productCard(p, { vendor = false } = {}) {
+// mode: 'shop' (cliente: precio + carrito), 'vendor' (precio sugerido + comisión + carrito) o 'view' (solo precio).
+function cardMode() {
+  if (!state.user) return 'shop';
+  return 'view';
+}
+
+function productCard(p, { mode = 'view' } = {}) {
+  const addBlock = (label) => `
+          <div class="product-actions">
+            <div class="qty">
+              <button type="button" data-qty="-1" aria-label="Menos">−</button>
+              <input type="number" min="1" max="999" value="1" aria-label="Cantidad">
+              <button type="button" data-qty="1" aria-label="Más">+</button>
+            </div>
+            <button class="btn sm solid" data-add="${p.id}">${label}</button>
+          </div>`;
   return `
     <article class="product" data-id="${p.id}">
       <div class="product-img">${productImage(p)}</div>
@@ -298,22 +361,34 @@ function productCard(p, { vendor = false } = {}) {
         <div class="product-name">${esc(p.name)}</div>
         <div class="product-meta">${[p.category, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).map(esc).join(' · ')}</div>
         ${p.description ? `<div class="product-desc">${esc(p.description)}</div>` : ''}
-        ${vendor ? `
+        ${mode === 'vendor' ? `
           <div class="product-prices">
             <div><div class="lbl">Precio sugerido</div><div class="val">${money(p.suggested_price)}</div></div>
             <div><div class="lbl">Tu comisión</div><div class="val gold">${money(p.commission)}</div></div>
           </div>
-          <div class="product-actions">
-            <div class="qty">
-              <button type="button" data-qty="-1" aria-label="Menos">−</button>
-              <input type="number" min="1" max="999" value="1" aria-label="Cantidad">
-              <button type="button" data-qty="1" aria-label="Más">+</button>
-            </div>
-            <button class="btn sm solid" data-add="${p.id}">Agregar</button>
-          </div>` : ''}
+          ${addBlock('Agregar')}`
+        : `<div class="product-price">${money(p.price)}</div>${mode === 'shop' ? addBlock('Al carrito') : ''}`}
       </div>
     </article>`;
 }
+
+// Botones de cantidad y "agregar al carrito" de cualquier tarjeta de perfume.
+app.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-qty], [data-add]');
+  const card = btn && btn.closest('.product');
+  if (!card) return;
+  const input = $('.qty input', card);
+  if (btn.dataset.qty) {
+    input.value = Math.max(1, Math.min(999, (Number(input.value) || 1) + Number(btn.dataset.qty)));
+    return;
+  }
+  const qty = Math.max(1, Math.min(999, Math.floor(Number(input.value)) || 1));
+  cart.add(btn.dataset.add, qty);
+  input.value = 1;
+  const tab = state.user?.role === 'vendor' && $$('.tab')[1];
+  if (tab) tab.textContent = `Carrito (${cart.count()})`;
+  toast(`Agregado al carrito (${qty})`);
+});
 
 function catalogFilters(perfumes, onChange) {
   const categories = [...new Set(perfumes.map((p) => p.category).filter(Boolean))];
@@ -354,12 +429,13 @@ async function viewCatalog() {
   }
   const draw = (list) => {
     $('#catalogGrid').innerHTML = list.length
-      ? `<div class="grid">${list.map((p) => productCard(p)).join('')}</div>`
+      ? `<div class="grid">${list.map((p) => productCard(p, { mode })).join('')}</div>`
       : '<div class="empty">No hay perfumes que coincidan con la búsqueda.</div>';
   };
+  const mode = cardMode();
   const filters = catalogFilters(perfumes, draw);
   root.innerHTML = `${filters.html}<div id="catalogGrid"></div>
-    ${state.user ? '' : '<p class="center muted small" style="margin-top:2rem">¿Eres vendedor? <a href="#/login" style="text-decoration:underline">Ingresa</a> para ver precios y comisiones.</p>'}`;
+    ${mode === 'shop' ? '<div class="center" style="margin-top:2rem"><a class="btn solid" href="#/carrito">Ir al carrito</a></div>' : ''}`;
   filters.bind(root);
   draw(perfumes);
 }
@@ -475,34 +551,17 @@ async function vendorCatalog(body) {
   }
   const draw = (list) => {
     $('#vGrid').innerHTML = list.length
-      ? `<div class="grid">${list.map((p) => productCard(p, { vendor: true })).join('')}</div>`
+      ? `<div class="grid">${list.map((p) => productCard(p, { mode: 'vendor' })).join('')}</div>`
       : '<div class="empty">No hay perfumes que coincidan con la búsqueda.</div>';
   };
   const filters = catalogFilters(perfumes, draw);
   body.innerHTML = `${filters.html}<div id="vGrid"></div>`;
   filters.bind(body);
   draw(perfumes);
-
-  body.addEventListener('click', (e) => {
-    const card = e.target.closest('.product');
-    if (!card) return;
-    const input = $('.qty input', card);
-    if (e.target.dataset.qty) {
-      input.value = Math.max(1, Math.min(999, (Number(input.value) || 1) + Number(e.target.dataset.qty)));
-    }
-    if (e.target.dataset.add) {
-      const qty = Math.max(1, Math.min(999, Math.floor(Number(input.value)) || 1));
-      cart.add(e.target.dataset.add, qty);
-      input.value = 1;
-      const tab = $$('.tab')[1];
-      if (tab) tab.textContent = `Carrito (${cart.count()})`;
-      toast(`Agregado al carrito (${qty})`);
-    }
-  });
 }
 
-async function vendorCart(body) {
-  const { perfumes } = await api('/api/vendor/perfumes');
+// Carrito compartido por clientes y vendedores.
+function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, onSubmit }) {
   const byId = Object.fromEntries(perfumes.map((p) => [String(p.id), p]));
   const draw = () => {
     const items = cart.read();
@@ -510,13 +569,13 @@ async function vendorCart(body) {
     const stale = Object.keys(items).filter((id) => !byId[id]);
     if (stale.length) { stale.forEach((id) => delete items[id]); cart.write(items); }
     const lines = Object.entries(items).map(([id, qty]) => ({ p: byId[id], qty }));
-    const total = lines.reduce((s, l) => s + l.p.suggested_price * l.qty, 0);
-    const commission = lines.reduce((s, l) => s + l.p.commission * l.qty, 0);
-    const tab = $$('.tab')[1];
+    const total = lines.reduce((sum, l) => sum + price(l.p) * l.qty, 0);
+    const totalCommission = commission ? lines.reduce((sum, l) => sum + commission(l.p) * l.qty, 0) : 0;
+    const tab = state.user?.role === 'vendor' && $$('.tab')[1];
     if (tab) tab.textContent = `Carrito${cart.count() ? ` (${cart.count()})` : ''}`;
 
     if (!lines.length) {
-      body.innerHTML = '<div class="empty">Tu carrito está vacío.<br><br><a class="btn sm" href="#/panel">Ir al catálogo</a></div>';
+      body.innerHTML = `<div class="empty">Tu carrito está vacío.<br><br><a class="btn sm" href="${emptyHref}">Ver el catálogo</a></div>`;
       return;
     }
     body.innerHTML = `
@@ -528,7 +587,7 @@ async function vendorCart(body) {
               <div>
                 <div class="product-brand">${esc(p.brand || '')}</div>
                 <div style="font-family:var(--serif);font-size:1.2rem">${esc(p.name)}${p.size_ml ? ` <span class="muted small">${p.size_ml} ml</span>` : ''}</div>
-                <div class="small muted">${money(p.suggested_price)} c/u · comisión ${money(p.commission)} c/u</div>
+                <div class="small muted">${money(price(p))} c/u${commission ? ` · comisión ${money(commission(p))} c/u` : ''}</div>
               </div>
               <div class="qty">
                 <button type="button" data-step="-1" aria-label="Menos">−</button>
@@ -538,17 +597,12 @@ async function vendorCart(body) {
               <button class="btn sm ghost danger" data-remove aria-label="Quitar">×</button>
             </div>`).join('')}
           <div style="margin-top:1rem">
-            <div class="cart-total"><span class="muted">Comisión total</span><span style="color:var(--gold)">${money(commission)}</span></div>
+            ${commission ? `<div class="cart-total"><span class="muted">Comisión total</span><span style="color:var(--gold)">${money(totalCommission)}</span></div>` : ''}
             <div class="cart-total big"><span>Total</span><span>${money(total)}</span></div>
           </div>
         </div>
         <form class="card form" id="orderForm">
-          <h3>Datos del cliente</h3>
-          <div class="field"><label for="c-name">Nombre del cliente *</label><input id="c-name" name="client_name" required maxlength="120"></div>
-          <div class="field"><label for="c-phone">Teléfono</label><input id="c-phone" name="client_phone" type="tel"></div>
-          <div class="field"><label for="c-addr">Dirección de entrega</label><input id="c-addr" name="client_address"></div>
-          <div class="field"><label for="c-notes">Notas</label><textarea id="c-notes" name="notes"></textarea></div>
-          <button class="btn solid" type="submit">Enviar pedido</button>
+          ${formHtml}
           <button class="btn ghost" type="button" id="clearCart">Vaciar carrito</button>
         </form>
       </div>`;
@@ -568,19 +622,163 @@ async function vendorCart(body) {
     });
     $('#orderForm').addEventListener('submit', (e) => {
       e.preventDefault();
-      withBusy(e.submitter, async () => {
-        const payload = {
-          ...formData(e.target),
-          items: lines.map(({ p, qty }) => ({ perfume_id: p.id, quantity: qty })),
-        };
-        const { order } = await api('/api/orders', { method: 'POST', body: payload });
-        cart.clear();
-        toast(`Pedido #${order.id} enviado`);
-        location.hash = '#/panel/pedidos';
-      });
+      const payload = {
+        ...formData(e.target),
+        items: lines.map(({ p, qty }) => ({ perfume_id: p.id, quantity: qty })),
+      };
+      withBusy(e.submitter, () => onSubmit(payload));
     });
   };
   draw();
+}
+
+async function vendorCart(body) {
+  const { perfumes } = await api('/api/vendor/perfumes');
+  renderCart(body, {
+    perfumes,
+    price: (p) => p.suggested_price,
+    commission: (p) => p.commission,
+    emptyHref: '#/panel',
+    formHtml: `
+      <h3>Datos del cliente</h3>
+      <div class="field"><label for="c-name">Nombre del cliente *</label><input id="c-name" name="client_name" required maxlength="120"></div>
+      <div class="field"><label for="c-phone">Teléfono</label><input id="c-phone" name="client_phone" type="tel"></div>
+      <div class="field"><label for="c-addr">Dirección de entrega</label><input id="c-addr" name="client_address"></div>
+      <div class="field"><label for="c-notes">Notas</label><textarea id="c-notes" name="notes"></textarea></div>
+      <button class="btn solid" type="submit">Enviar pedido</button>`,
+    onSubmit: async (payload) => {
+      const { order } = await api('/api/orders', { method: 'POST', body: payload });
+      cart.clear();
+      toast(`Pedido #${order.id} enviado`);
+      location.hash = '#/panel/pedidos';
+    },
+  });
+}
+
+/* =================================================================
+   Tienda: carrito del cliente, pago con QR y seguimiento
+   ================================================================= */
+async function viewShopCart() {
+  if (state.user?.role === 'vendor') { location.hash = '#/panel/carrito'; return; }
+  app.innerHTML = '<div class="section-head"><div><div class="eyebrow">Tu compra</div><h2>Carrito</h2></div></div><div id="cartBody"></div>';
+  if (state.user?.role === 'admin') {
+    $('#cartBody').innerHTML = '<div class="empty">Estás conectado como administrador. Cierra sesión para probar la tienda como cliente.</div>';
+    return;
+  }
+  const { perfumes } = await api('/api/catalog');
+  renderCart($('#cartBody'), {
+    perfumes,
+    price: (p) => p.price,
+    emptyHref: '#/catalogo',
+    formHtml: `
+      <h3>Tus datos</h3>
+      <div class="field"><label for="c-name">Nombre completo *</label><input id="c-name" name="client_name" required maxlength="120" autocomplete="name"></div>
+      <div class="field"><label for="c-phone">Celular / WhatsApp *</label><input id="c-phone" name="client_phone" type="tel" required autocomplete="tel" placeholder="Ej: 70012345"></div>
+      <div class="field"><label for="c-addr">Dirección o zona de entrega</label><input id="c-addr" name="client_address" autocomplete="street-address"></div>
+      <div class="field"><label for="c-notes">Notas</label><textarea id="c-notes" name="notes" placeholder="Ej: horario de entrega, referencia…"></textarea></div>
+      <p class="small muted" style="margin:0">Al realizar el pedido te mostraremos nuestro <strong style="color:var(--fg)">QR de pago</strong>.</p>
+      <button class="btn solid" type="submit">Realizar pedido</button>`,
+    onSubmit: async (payload) => {
+      const { order } = await api('/api/public/orders', { method: 'POST', body: payload });
+      myOrders.add(order);
+      cart.clear();
+      location.hash = `#/pedido/${order.token}`;
+    },
+  });
+}
+
+async function viewTrack(token) {
+  const [{ order }, settings] = await Promise.all([api(`/api/public/orders/${encodeURIComponent(token)}`), getSettings()]);
+  const pending = order.payment_status !== 'pagado' && order.status !== 'cancelado';
+  const qr = settings.payment_qr;
+  const waMsg = `Hola Distinto SCZ, hice el pedido #${order.id} por ${money(order.total)}. Les envío mi comprobante de pago.`;
+  const wa = settings.whatsapp ? waLink(settings.whatsapp, waMsg) : '';
+
+  let payCard;
+  if (order.status === 'cancelado') {
+    payCard = '<div class="card pay-card center"><h3>Pedido cancelado</h3><p class="muted">Si tienes dudas, escríbenos.</p></div>';
+  } else if (!pending) {
+    payCard = '<div class="card pay-card center paid"><div class="paid-check">✓</div><h3>Pago confirmado</h3><p class="muted">¡Gracias! Estamos preparando tu pedido.</p></div>';
+  } else {
+    payCard = `
+      <div class="card pay-card">
+        <div class="eyebrow">Paga con QR</div>
+        <div class="pay-amount"><span class="muted small">Total a pagar</span><strong>${money(order.total)}</strong></div>
+        <img class="qr-img" src="${esc(qr)}" alt="QR de pago de Distinto SCZ">
+        <ol class="pay-steps">
+          <li>Abre <strong>Yape</strong> o la app de tu banco.</li>
+          <li>Escanea el QR. Si estás en el celular, <strong>descárgalo</strong> y súbelo desde tu galería.</li>
+          <li>Paga <strong>${money(order.total)}</strong> y en el concepto escribe <strong>Pedido #${order.id}</strong>.</li>
+          <li>Sube aquí la captura de tu comprobante.</li>
+        </ol>
+        <div class="btn-row">
+          <a class="btn" href="${esc(qr)}" download="QR-Distinto-SCZ">Descargar QR</a>
+          <label class="btn solid" for="proofFile">${order.has_proof ? 'Cambiar comprobante' : 'Subir comprobante'}</label>
+          <input type="file" id="proofFile" accept="image/png,image/jpeg,image/webp" hidden>
+          ${wa ? `<a class="btn" href="${esc(wa)}" target="_blank" rel="noopener">Enviar por WhatsApp</a>` : ''}
+        </div>
+        ${order.has_proof ? '<p class="ok-note">✓ Recibimos tu comprobante. Lo revisaremos y confirmaremos tu pago.</p>' : ''}
+      </div>`;
+  }
+
+  app.innerHTML = `
+    <div class="section-head">
+      <div>
+        <div class="eyebrow">Pedido #${order.id} · ${fmtDate(order.created_at)}</div>
+        <h2>${pending ? `¡Gracias, ${esc(order.client_name.split(' ')[0])}!` : `Pedido #${order.id}`}</h2>
+        ${pending ? '<p class="muted" style="margin:0">Recibimos tu pedido. Solo falta el pago para empezar a prepararlo.</p>' : ''}
+      </div>
+      <div class="btn-row">${badge(order.status)} ${payBadge(order.payment_status)}</div>
+    </div>
+    <div class="pay-layout">
+      ${payCard}
+      <div class="card">
+        <h3>Estado del pedido</h3>
+        ${progressBar(order.status)}
+        <ul class="order-items" style="margin-top:1.2rem">
+          ${order.items.map((it) => `<li><span>${it.quantity} × ${esc(it.perfume_name)}</span><span>${money(it.unit_price * it.quantity)}</span></li>`).join('')}
+        </ul>
+        <div class="cart-total big"><span>Total</span><span>${money(order.total)}</span></div>
+        <p class="small muted">${[order.client_name, order.client_phone, order.client_address].filter(Boolean).map(esc).join(' · ')}</p>
+        ${order.admin_note ? `<p class="small"><span class="muted">Mensaje de la tienda:</span> ${esc(order.admin_note)}</p>` : ''}
+        <h3 style="margin-top:1.5rem">Historial</h3>
+        <ul class="timeline">
+          ${order.history.map((h) => `<li>${badge(h.status)} <span class="muted">${fmtDate(h.created_at)}</span>${h.note ? `<div>${esc(h.note)}</div>` : ''}</li>`).join('')}
+        </ul>
+        <div class="track-link">
+          <span class="small muted">Guarda este enlace para ver tu pedido cuando quieras:</span>
+          <button class="btn sm" id="copyLink">Copiar enlace</button>
+        </div>
+      </div>
+    </div>`;
+
+  $('#copyLink').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(location.href); toast('Enlace copiado'); } catch { prompt('Copia este enlace:', location.href); }
+  });
+  const proof = $('#proofFile');
+  if (proof) proof.addEventListener('change', () => withBusy(null, async () => {
+    const data = await readImageFile(proof.files[0], 5);
+    await api(`/api/public/orders/${encodeURIComponent(token)}/proof`, { method: 'POST', body: { data } });
+    toast('Comprobante enviado. ¡Gracias!');
+    viewTrack(token);
+  }));
+}
+
+async function viewMyOrders() {
+  app.innerHTML = '<div class="section-head"><div><div class="eyebrow">Tus compras</div><h2>Mis pedidos</h2></div></div><div id="myOrders"></div>';
+  const saved = myOrders.read();
+  const results = await Promise.all(saved.map((o) => api(`/api/public/orders/${o.token}`).then((r) => r.order).catch(() => null)));
+  const orders = results.filter(Boolean);
+  $('#myOrders').innerHTML = orders.length
+    ? `<div class="orders">${orders.map((o) => `
+        <a class="order" href="#/pedido/${esc(o.token)}" style="display:block">
+          <div class="order-head">
+            <div><div class="title">Pedido #${o.id}</div><div class="small muted">${fmtDate(o.created_at)} · ${o.items.reduce((n, it) => n + it.quantity, 0)} producto(s)</div></div>
+            <div class="btn-row">${badge(o.status)} ${payBadge(o.payment_status)}</div>
+          </div>
+          <div class="order-foot"><span class="small muted">Total <strong style="color:var(--fg)">${money(o.total)}</strong></span><span class="btn sm">Ver pedido</span></div>
+        </a>`).join('')}</div>`
+    : '<div class="empty">Aún no hiciste pedidos desde este dispositivo.<br><br><a class="btn sm" href="#/catalogo">Ver el catálogo</a></div>';
 }
 
 function progressBar(status) {
@@ -591,34 +789,45 @@ function progressBar(status) {
 }
 
 function orderCard(o, { admin = false, statuses = [] } = {}) {
+  const direct = o.source === 'cliente';
+  const who = direct
+    ? '<span class="badge source">Cliente directo</span>'
+    : admin ? `Vendedor: <strong style="color:var(--fg)">${esc(o.vendor_name || '—')}</strong>` : '';
+  const phone = admin && o.client_phone
+    ? `<a href="${esc(waLink(o.client_phone, `Hola ${o.client_name}, te escribimos de Distinto SCZ por tu pedido #${o.id}.`))}" target="_blank" rel="noopener" style="text-decoration:underline">${esc(o.client_phone)}</a>`
+    : esc(o.client_phone || '');
   return `
     <article class="order" data-id="${o.id}">
       <div class="order-head">
         <div>
           <div class="title">Pedido #${o.id} · ${esc(o.client_name)}</div>
-          <div class="small muted">${fmtDate(o.created_at)}${admin ? ` · Vendedor: <strong style="color:var(--fg)">${esc(o.vendor_name)}</strong>` : ''}</div>
+          <div class="small muted">${fmtDate(o.created_at)}${who ? ` · ${who}` : ''}</div>
         </div>
-        ${badge(o.status)}
+        <div class="btn-row">${badge(o.status)} ${admin || direct ? payBadge(o.payment_status) : ''}</div>
       </div>
       <div class="order-body">
         ${progressBar(o.status)}
         <ul class="order-items">
           ${o.items.map((it) => `<li><span>${it.quantity} × ${esc(it.perfume_name)}</span><span>${money(it.unit_price * it.quantity)}</span></li>`).join('')}
         </ul>
-        ${o.client_phone || o.client_address ? `<div class="small muted">${[o.client_phone, o.client_address].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
+        ${phone || o.client_address ? `<div class="small muted">${[phone, esc(o.client_address || '')].filter(Boolean).join(' · ')}</div>` : ''}
         ${o.notes ? `<div class="small"><span class="muted">Notas:</span> ${esc(o.notes)}</div>` : ''}
         ${o.admin_note ? `<div class="small"><span class="muted">Nota del administrador:</span> ${esc(o.admin_note)}</div>` : ''}
+        ${admin && o.payment_proof ? `<div class="small"><a href="${esc(o.payment_proof)}" target="_blank" rel="noopener" class="btn sm">Ver comprobante de pago</a></div>` : ''}
       </div>
       <div class="order-foot">
         <div class="totals">
           <span class="small muted">Total <strong style="color:var(--fg)">${money(o.total)}</strong></span>
-          <span class="small muted">Comisión <strong style="color:var(--gold)">${money(o.total_commission)}</strong></span>
+          ${direct ? '' : `<span class="small muted">Comisión <strong style="color:var(--gold)">${money(o.total_commission)}</strong></span>`}
         </div>
         <div class="btn-row">
           <button class="btn sm ghost" data-detail="${o.id}">Historial</button>
           ${admin ? `
+            ${o.payment_status === 'pagado'
+              ? `<button class="btn sm ghost" data-pay="${o.id}" data-pay-to="pendiente">Marcar no pagado</button>`
+              : `<button class="btn sm ok" data-pay="${o.id}" data-pay-to="pagado">Confirmar pago</button>`}
             <select data-status="${o.id}" aria-label="Cambiar estado" style="width:auto;padding:0.4rem 0.6rem">
-              ${statuses.map((s) => `<option value="${s}" ${s === o.status ? 'selected' : ''}>${STATUS_LABELS[s]}</option>`).join('')}
+              ${statuses.map((st) => `<option value="${st}" ${st === o.status ? 'selected' : ''}>${STATUS_LABELS[st]}</option>`).join('')}
             </select>
             <button class="btn sm solid" data-save-status="${o.id}">Actualizar estado</button>` : ''}
           ${!admin && o.status === 'pendiente' ? `<button class="btn sm danger" data-cancel="${o.id}">Cancelar</button>` : ''}
@@ -632,7 +841,9 @@ async function showOrderHistory(id) {
   openModal(`
     <div class="eyebrow">Pedido #${order.id}</div>
     <h3>${esc(order.client_name)}</h3>
-    <p class="small muted">Vendedor: ${esc(order.vendor_name)}${order.vendor_phone ? ' · ' + esc(order.vendor_phone) : ''}</p>
+    <p class="small muted">${order.source === 'cliente'
+      ? `Cliente directo · ${esc(order.client_phone || '')}`
+      : `Vendedor: ${esc(order.vendor_name || '—')}${order.vendor_phone ? ' · ' + esc(order.vendor_phone) : ''}`}</p>
     ${progressBar(order.status)}
     <h3 style="margin-top:1.5rem">Historial</h3>
     <ul class="timeline">
@@ -728,7 +939,7 @@ async function viewAdmin(tab) {
     ['catalogo', 'Catálogo'],
     ['pedidos', `Pedidos${summary.openOrders ? ` (${summary.openOrders})` : ''}`],
     ['ranking', 'Ranking'],
-    ['cuenta', 'Cuenta'],
+    ['cuenta', 'Pagos y cuenta'],
   ];
   app.innerHTML = `
     <div class="panel-head"><div><div class="eyebrow">Administración</div><h2 style="margin:0">Panel de control</h2></div></div>
@@ -747,6 +958,8 @@ function adminSummary(body, s) {
       <div class="stat"><div class="lbl">Vendedores activos</div><div class="val">${s.approvedVendors}</div></div>
       <div class="stat"><div class="lbl">Perfumes publicados</div><div class="val">${s.activePerfumes}</div></div>
       <div class="stat"><div class="lbl">Pedidos en curso</div><div class="val">${s.openOrders}</div></div>
+      <div class="stat"><div class="lbl">Pedidos de clientes en curso</div><div class="val">${s.openCustomerOrders}</div></div>
+      <div class="stat"><div class="lbl">Pagos por confirmar</div><div class="val">${s.unpaidCustomerOrders}</div></div>
       <div class="stat"><div class="lbl">Ventas entregadas · mes</div><div class="val">${money(s.monthSales)}</div></div>
     </div>
     <div class="btn-row">
@@ -812,7 +1025,7 @@ async function adminPerfumes(body) {
     </div>
     ${perfumes.length ? `
       <div class="table-wrap"><table>
-        <thead><tr><th></th><th>Perfume</th><th>Categoría</th><th class="num">Precio sugerido</th><th class="num">Comisión</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
+        <thead><tr><th></th><th>Perfume</th><th>Categoría</th><th class="num">Precio</th><th class="num">Comisión</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
         <tbody>
           ${perfumes.map((p) => `
             <tr>
@@ -858,8 +1071,8 @@ function perfumeForm(p = {}) {
           </select>
         </div>
         <div class="field"><label for="p-size">Tamaño (ml)</label><input id="p-size" name="size_ml" type="number" min="1" value="${esc(p.size_ml || '')}"></div>
-        <div class="field"><label for="p-price">Precio sugerido de venta *</label><input id="p-price" name="suggested_price" type="number" min="0" step="0.01" required value="${esc(p.suggested_price ?? '')}"></div>
-        <div class="field"><label for="p-comm">Comisión del vendedor *</label><input id="p-comm" name="commission" type="number" min="0" step="0.01" required value="${esc(p.commission ?? '')}"></div>
+        <div class="field"><label for="p-price">Precio de venta (Bs) *</label><input id="p-price" name="suggested_price" type="number" min="0" step="0.01" required value="${esc(p.suggested_price ?? '')}"></div>
+        <div class="field"><label for="p-comm">Comisión del vendedor (Bs) *</label><input id="p-comm" name="commission" type="number" min="0" step="0.01" required value="${esc(p.commission ?? '')}"></div>
         <div class="field full"><label for="p-desc">Descripción / notas olfativas</label><textarea id="p-desc" name="description">${esc(p.description || '')}</textarea></div>
         <div class="field full">
           <label for="p-img">Imagen (URL o sube un archivo)</label>
@@ -882,18 +1095,14 @@ function perfumeForm(p = {}) {
     if (imgInput.value) preview.src = imgInput.value;
   });
   $('#p-file', root).addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > 4 * 1024 * 1024) { toast('La imagen debe pesar menos de 4 MB', true); return; }
-    const reader = new FileReader();
-    reader.onload = () => withBusy(null, async () => {
-      const { url } = await api('/api/admin/upload', { method: 'POST', body: { data: reader.result } });
+    withBusy(null, async () => {
+      const data = await readImageFile(e.target.files[0]);
+      const { url } = await api('/api/admin/upload', { method: 'POST', body: { data } });
       imgInput.value = url;
       preview.src = url;
       preview.hidden = false;
       toast('Imagen subida');
     });
-    reader.readAsDataURL(file);
   });
   $('#cancelPerfume', root).addEventListener('click', closeModal);
   $('#perfumeForm', root).addEventListener('submit', (e) => {
@@ -909,14 +1118,28 @@ function perfumeForm(p = {}) {
   });
 }
 
-async function adminOrders(body, _s, filter = '') {
-  const { orders, statuses } = await api(`/api/orders${filter ? `?status=${filter}` : ''}`);
+async function adminOrders(body, _s, filter = '', source = '') {
+  const qs = new URLSearchParams();
+  if (filter) qs.set('status', filter);
+  if (source) qs.set('source', source);
+  const { orders, statuses } = await api(`/api/orders?${qs}`);
+  const reload = () => adminOrders(body, null, filter, source);
   body.innerHTML = `
+    <div class="chips" style="margin-bottom:0.6rem">
+      ${[['', 'Todos los pedidos'], ['cliente', 'Clientes directos'], ['vendedor', 'De vendedores']]
+        .map(([k, l]) => `<button class="chip ${k === source ? 'active' : ''}" data-source="${k}">${l}</button>`).join('')}
+    </div>
     ${orderFilterBar(statuses, filter)}
     ${orders.length ? `<div class="orders">${orders.map((o) => orderCard(o, { admin: true, statuses })).join('')}</div>`
       : '<div class="empty">No hay pedidos en esta lista.</div>'}`;
-  $$('[data-filter]', body).forEach((c) => c.addEventListener('click', () => adminOrders(body, null, c.dataset.filter)));
+  $$('[data-source]', body).forEach((c) => c.addEventListener('click', () => adminOrders(body, null, filter, c.dataset.source)));
+  $$('[data-filter]', body).forEach((c) => c.addEventListener('click', () => adminOrders(body, null, c.dataset.filter, source)));
   $$('[data-detail]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, () => showOrderHistory(b.dataset.detail))));
+  $$('[data-pay]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, async () => {
+    await api(`/api/orders/${b.dataset.pay}/payment`, { method: 'PATCH', body: { payment_status: b.dataset.payTo } });
+    toast(b.dataset.payTo === 'pagado' ? `Pago del pedido #${b.dataset.pay} confirmado` : 'Pago marcado como pendiente');
+    reload();
+  })));
   $$('[data-save-status]', body).forEach((b) => b.addEventListener('click', () => {
     const id = b.dataset.saveStatus;
     const status = $(`[data-status="${id}"]`, body).value;
@@ -924,7 +1147,7 @@ async function adminOrders(body, _s, filter = '') {
       <div class="eyebrow">Pedido #${esc(id)}</div>
       <h3>Cambiar estado a ${badge(status)}</h3>
       <form class="form" id="statusForm">
-        <div class="field"><label for="s-note">Nota para el vendedor (opcional)</label><textarea id="s-note" name="note" placeholder="Ej: enviado por courier, número de guía…"></textarea></div>
+        <div class="field"><label for="s-note">Nota (la verá el cliente o el vendedor, opcional)</label><textarea id="s-note" name="note" placeholder="Ej: sale hoy por la tarde, número de guía…"></textarea></div>
         <div class="btn-row"><button class="btn solid" type="submit">Confirmar</button><button class="btn ghost" type="button" id="cancelStatus">Cancelar</button></div>
       </form>`);
     $('#cancelStatus', root).addEventListener('click', closeModal);
@@ -934,15 +1157,26 @@ async function adminOrders(body, _s, filter = '') {
         await api(`/api/orders/${id}/status`, { method: 'PATCH', body: { status, note: e.target.note.value } });
         closeModal();
         toast(`Pedido #${id}: ${STATUS_LABELS[status]}`);
-        adminOrders(body, null, filter);
+        reload();
       });
     });
   }));
 }
 
-function adminAccount(body) {
+async function adminAccount(body) {
+  settingsCache = null;
+  const settings = await getSettings();
   body.innerHTML = `
-    <div class="form-wrap" style="margin:0;max-width:480px">
+    <div class="account-grid">
+      <form class="card form" id="storeForm">
+        <h3>Pagos de la tienda</h3>
+        <p class="small muted" style="margin:0">Este QR se muestra a los clientes al realizar su pedido.</p>
+        <img class="qr-img small-qr" id="qrPreview" src="${esc(settings.payment_qr)}" alt="QR de pago actual">
+        <div class="field"><label for="qrFile">Cambiar QR de pago</label><input type="file" id="qrFile" accept="image/png,image/jpeg,image/webp"></div>
+        <div class="field"><label for="waNum">WhatsApp de la tienda (opcional)</label><input id="waNum" name="whatsapp" type="tel" placeholder="Ej: 70012345" value="${esc(settings.whatsapp)}"></div>
+        <p class="small muted" style="margin:0">Si lo llenas, los clientes verán un botón para enviarte su comprobante por WhatsApp.</p>
+        <button class="btn solid" type="submit">Guardar</button>
+      </form>
       <form class="card form" id="passForm">
         <h3>Cambiar contraseña</h3>
         <p class="small muted">Sesión iniciada como ${esc(state.user.email)}</p>
@@ -951,6 +1185,24 @@ function adminAccount(body) {
         <button class="btn solid" type="submit">Guardar</button>
       </form>
     </div>`;
+  let newQr = null;
+  $('#qrFile').addEventListener('change', (e) => withBusy(null, async () => {
+    const data = await readImageFile(e.target.files[0]);
+    const { url } = await api('/api/admin/upload', { method: 'POST', body: { data } });
+    newQr = url;
+    $('#qrPreview').src = url;
+    toast('QR cargado. Presiona Guardar para usarlo.');
+  }));
+  $('#storeForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    withBusy(e.submitter, async () => {
+      const payload = { whatsapp: $('#waNum').value };
+      if (newQr) payload.payment_qr = newQr;
+      settingsCache = (await api('/api/admin/settings', { method: 'PUT', body: payload })).settings;
+      newQr = null;
+      toast('Ajustes guardados');
+    });
+  });
   $('#passForm').addEventListener('submit', (e) => {
     e.preventDefault();
     withBusy(e.submitter, async () => {

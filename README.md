@@ -4,7 +4,11 @@
 
 Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con el logo de la marca y animaciones (intro con el logo, aparición de elementos al hacer scroll, contadores animados, marquesina y transiciones entre páginas; se desactivan si el sistema pide reducir el movimiento). Incluye:
 
-- **Catálogo público** de perfumes, con búsqueda y filtro por categoría.
+- **Tienda para clientes**:
+  - Catálogo con precios, búsqueda y filtro por categoría.
+  - Carrito y pedido sin crear cuenta (nombre y celular).
+  - Al realizar el pedido se muestra el **QR de pago** (Yape) con el monto exacto. El cliente puede descargar el QR, subir la captura del comprobante y enviarlo por WhatsApp.
+  - Página de seguimiento del pedido con su estado e historial, y sección "Mis pedidos" en el mismo dispositivo.
 - **Registro de vendedores**: las personas envían su solicitud y el administrador la **acepta o rechaza**.
 - **Panel del vendedor** (solo cuando está aprobado):
   - **Precios y comisiones**: precio sugerido de venta y comisión por cada perfume, que define el administrador.
@@ -15,7 +19,8 @@ Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con
   - Resumen con indicadores.
   - Solicitudes de vendedores: aceptar, rechazar, suspender o eliminar.
   - Catálogo: agregar, editar, ocultar o eliminar perfumes, con imagen por URL o archivo subido.
-  - Pedidos: cambiar el estado (Pendiente, Confirmado, En preparación, Enviado, Entregado o Cancelado) con una nota para el vendedor.
+  - Pedidos de clientes directos y de vendedores, con filtros: confirmar el pago, ver el comprobante, escribir al cliente por WhatsApp y cambiar el estado (Pendiente, Confirmado, En preparación, Enviado, Entregado o Cancelado) con una nota.
+  - Pagos y cuenta: cambiar el QR de pago, el WhatsApp de la tienda y la contraseña.
   - Ranking por mes, con la comisión de cada vendedor.
   - Cambio de contraseña.
 
@@ -68,7 +73,7 @@ Ejemplo: `TZ=America/Lima ADMIN_PASSWORD=miClaveSegura npm start`
 2. El administrador lo acepta en **Administración → Vendedores**.
 3. El vendedor ingresa, ve precios y comisiones, agrega perfumes al carrito y envía el pedido con el nombre del cliente.
 4. El administrador actualiza el estado del pedido en **Administración → Pedidos**, y el vendedor lo ve en **Mis pedidos**.
-5. **Ranking**: solo cuentan los pedidos **entregados**. Se ordena por monto vendido en el mes en que se creó el pedido. Los vendedores no ven la comisión de los demás.
+5. **Ranking**: solo cuentan los pedidos de vendedores **entregados**. Se ordena por monto vendido en el mes en que se creó el pedido. Los vendedores no ven la comisión de los demás.
 
 El precio y la comisión se guardan en cada pedido al momento de crearlo, así que cambiar los precios del catálogo no altera pedidos anteriores.
 
