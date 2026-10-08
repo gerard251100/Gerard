@@ -19,6 +19,15 @@ function money(n) {
   return 'Bs ' + Number(n || 0).toLocaleString('es', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function deliveryText(o) {
+  if (o.delivery_method === 'recojo') return 'Recojo en tienda';
+  if (o.delivery_method === 'domicilio') return `Envío a domicilio · ${o.client_address || ''}`;
+  if (o.delivery_method === 'envio') {
+    return `Envío a ${o.delivery_city} · Recibe: ${o.recipient_name} (CI ${o.recipient_ci}, cel. ${o.recipient_phone}) · ${o.client_address || ''}`;
+  }
+  return '';
+}
+
 // kind: 'created' (pedido recibido), 'status' (cambió el estado) o 'paid' (pago confirmado).
 function orderEmail(order, kind, link) {
   const status = STATUS_LABELS[order.status] || order.status;
@@ -67,6 +76,7 @@ function orderEmail(order, kind, link) {
               <td style="padding:12px 0 0;font-family:Georgia,serif;font-size:18px;text-align:right">${money(order.total)}</td>
             </tr>
           </table>
+          ${deliveryText(order) ? `<p style="margin:18px 0 0;font-size:13px;color:#bbbbbb"><strong style="color:#ffffff">Entrega:</strong> ${esc(deliveryText(order))}</p>` : ''}
           ${link ? `
           <table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px auto 4px">
             <tr><td style="background:#ffffff;text-align:center">

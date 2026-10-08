@@ -517,6 +517,97 @@ async function viewCatalog() {
   draw(perfumes);
 }
 
+/* ---- Ciudades y forma de entrega ---- */
+const CITIES = ['Santa Cruz de la Sierra', 'Montero', 'Warnes', 'La Paz', 'El Alto', 'Cochabamba', 'Sucre', 'Oruro', 'Potosí', 'Tarija', 'Trinidad', 'Cobija'];
+const OTHER = 'Otra';
+
+// Lista de ciudades con la opción "Otra" (que muestra un campo para escribirla).
+function citySelect(id, name, { exclude = [], required = true } = {}) {
+  const opts = CITIES.filter((c) => !exclude.includes(c)).map((c) => `<option>${esc(c)}</option>`).join('');
+  return `
+    <select id="${id}" data-city-select ${required ? 'required' : ''}>
+      <option value="">Elige una ciudad…</option>${opts}<option value="${OTHER}">Otra ciudad…</option>
+    </select>
+    <input type="hidden" name="${name}">
+    <input class="city-other" data-city-other placeholder="Escribe tu ciudad" maxlength="80" hidden>`;
+}
+
+function deliveryFields(who) {
+  const opt = (value, title, sub) => `
+    <label class="delivery-opt"><input type="radio" name="delivery_method" value="${value}" required>
+      <span><strong>${title}</strong><small>${sub}</small></span></label>`;
+  return `
+    <h3 style="margin-top:0.6rem">Entrega</h3>
+    <div class="delivery-opts">
+      ${opt('recojo', 'Recojo en tienda', 'Sin costo · Santa Cruz')}
+      ${opt('domicilio', 'Envío a domicilio', 'Dentro de Santa Cruz')}
+      ${opt('envio', 'Envío a otra ciudad', 'Por flota o encomienda')}
+    </div>
+    <div class="delivery-extra" data-for="domicilio" hidden>
+      <div class="field"><label for="d-addr">Dirección de entrega *</label><input id="d-addr" name="client_address" maxlength="250" autocomplete="street-address" placeholder="Barrio, calle, número, referencia"></div>
+      <p class="small muted" style="margin:0">El costo del envío se coordina por WhatsApp.</p>
+    </div>
+    <div class="delivery-extra" data-for="envio" hidden>
+      <div class="field"><label for="d-city">Ciudad de destino *</label>${citySelect('d-city', 'delivery_city', { exclude: ['Santa Cruz de la Sierra', 'Montero', 'Warnes'] })}</div>
+      <div class="field"><label for="d-rname">Nombre completo de quien recibe *</label><input id="d-rname" name="recipient_name" maxlength="120"></div>
+      <div class="form-grid">
+        <div class="field"><label for="d-rci">CI de quien recibe *</label><input id="d-rci" name="recipient_ci" maxlength="30" inputmode="numeric"></div>
+        <div class="field"><label for="d-rphone">Celular de quien recibe *</label><input id="d-rphone" name="recipient_phone" type="tel" maxlength="40"></div>
+      </div>
+      <div class="field"><label for="d-addr2">Dirección o agencia de destino *</label><input id="d-addr2" name="client_address" maxlength="250" placeholder="Ej: Terminal de buses, agencia de encomiendas o dirección"></div>
+      <p class="small muted" style="margin:0">El costo del envío ${who === 'vendor' ? 'lo paga el cliente y ' : ''}se coordina por WhatsApp.</p>
+    </div>`;
+}
+
+// Muestra solo los campos de la opción de entrega elegida (y desactiva los demás para que no se envíen).
+function syncDelivery(form) {
+  const method = form.querySelector('[name="delivery_method"]:checked')?.value;
+  form.querySelectorAll('.delivery-extra').forEach((box) => {
+    const on = box.dataset.for === method;
+    box.hidden = !on;
+    box.querySelectorAll('input, select').forEach((el) => {
+      el.disabled = !on;
+      if (el.matches('[data-city-other], [type="hidden"], [type="radio"]')) return;
+      el.required = on && !/opcional/i.test(el.previousElementSibling?.textContent || '');
+    });
+  });
+  syncCities(form);
+}
+
+function syncCities(form) {
+  form.querySelectorAll('[data-city-select]').forEach((sel) => {
+    const other = sel.parentElement.querySelector('[data-city-other]');
+    const hidden = sel.parentElement.querySelector('input[type="hidden"]');
+    const isOther = sel.value === OTHER;
+    other.hidden = !isOther;
+    other.required = isOther && !sel.disabled;
+    other.disabled = sel.disabled;
+    hidden.disabled = sel.disabled;
+    hidden.value = isOther ? other.value.trim() : sel.value;
+  });
+}
+
+document.addEventListener('change', (e) => {
+  const form = e.target.closest('form');
+  if (!form) return;
+  if (e.target.name === 'delivery_method') syncDelivery(form);
+  else if (e.target.matches('[data-city-select]')) { syncCities(form); if (e.target.value === OTHER) e.target.parentElement.querySelector('[data-city-other]').focus(); }
+});
+document.addEventListener('input', (e) => {
+  if (e.target.matches('[data-city-other]')) syncCities(e.target.closest('form'));
+});
+
+// Texto corto de la entrega para mostrar en los pedidos.
+function deliveryHtml(o) {
+  if (o.delivery_method === 'recojo') return '<div class="delivery-line"><span class="muted">Entrega:</span> <strong>Recojo en tienda</strong></div>';
+  if (o.delivery_method === 'domicilio') return `<div class="delivery-line"><span class="muted">Entrega:</span> <strong>Envío a domicilio</strong> · ${esc(o.client_address || '')}</div>`;
+  if (o.delivery_method === 'envio') {
+    return `<div class="delivery-line"><span class="muted">Entrega:</span> <strong>Envío a ${esc(o.delivery_city)}</strong> · ${esc(o.client_address || '')}
+      <div class="small muted">Recibe: ${esc(o.recipient_name)} · CI ${esc(o.recipient_ci)} · Cel. ${esc(o.recipient_phone)}</div></div>`;
+  }
+  return '';
+}
+
 function viewRegister() {
   if (state.user) { location.hash = state.user.role === 'admin' ? '#/admin' : '#/panel'; return; }
   app.innerHTML = `
@@ -529,7 +620,7 @@ function viewRegister() {
           <div class="field full"><label for="r-name">Nombre completo *</label><input id="r-name" name="name" required maxlength="100" autocomplete="name"></div>
           <div class="field"><label for="r-email">Correo *</label><input id="r-email" name="email" type="email" required autocomplete="email"></div>
           <div class="field"><label for="r-phone">Teléfono / WhatsApp</label><input id="r-phone" name="phone" type="tel" autocomplete="tel"></div>
-          <div class="field"><label for="r-city">Ciudad</label><input id="r-city" name="city"></div>
+          <div class="field"><label for="r-city">Ciudad *</label>${citySelect('r-city', 'city')}</div>
           <div class="field"><label for="r-pass">Contraseña *</label><input id="r-pass" name="password" type="password" required minlength="6" autocomplete="new-password"></div>
           <div class="field full"><label for="r-msg">¿Por qué quieres ser vendedor?</label><textarea id="r-msg" name="message" maxlength="1000"></textarea></div>
         </div>
@@ -641,6 +732,9 @@ async function vendorCatalog(body) {
 function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, onSubmit }) {
   const byId = Object.fromEntries(perfumes.map((p) => [String(p.id), p]));
   const draw = () => {
+    // Conserva lo que ya se escribió en el formulario al cambiar cantidades.
+    const prev = $('#orderForm', body);
+    const saved = prev ? $$('input, select, textarea', prev).map((el) => (el.type === 'radio' ? el.checked : el.value)) : null;
     const items = cart.read();
     // Quitar del carrito los perfumes que ya no están activos.
     const stale = Object.keys(items).filter((id) => !byId[id]);
@@ -684,6 +778,10 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
         </form>
       </div>`;
 
+    const form = $('#orderForm', body);
+    if (saved) $$('input, select, textarea', form).forEach((el, i) => { if (el.type === 'radio') el.checked = saved[i]; else if (saved[i] !== undefined) el.value = saved[i]; });
+    syncDelivery(form);
+
     $$('.cart-line', body).forEach((line) => {
       const id = line.dataset.id;
       const input = $('input', line);
@@ -721,7 +819,7 @@ async function vendorCart(body) {
       <div class="field"><label for="c-name">Nombre del cliente *</label><input id="c-name" name="client_name" required maxlength="120"></div>
       <div class="field"><label for="c-phone">Teléfono</label><input id="c-phone" name="client_phone" type="tel"></div>
       <div class="field"><label for="c-email">Correo del cliente (opcional)</label><input id="c-email" name="client_email" type="email" autocomplete="off" placeholder="Para avisarle el estado del pedido"></div>
-      <div class="field"><label for="c-addr">Dirección de entrega</label><input id="c-addr" name="client_address"></div>
+      ${deliveryFields('vendor')}
       <div class="field"><label for="c-notes">Notas</label><textarea id="c-notes" name="notes"></textarea></div>
       <button class="btn solid" type="submit">Enviar pedido</button>`,
     onSubmit: async (payload) => {
@@ -750,7 +848,7 @@ async function viewShopCart() {
       <div class="field"><label for="c-phone">Celular / WhatsApp *</label><input id="c-phone" name="client_phone" type="tel" required autocomplete="tel" placeholder="Ej: 70012345"></div>
       <div class="field"><label for="c-email">Correo electrónico (opcional)</label><input id="c-email" name="client_email" type="email" autocomplete="email" inputmode="email" placeholder="tucorreo@gmail.com">
         <span class="small muted">Te enviaremos el estado de tu pedido cada vez que cambie.</span></div>
-      <div class="field"><label for="c-addr">Dirección o zona de entrega</label><input id="c-addr" name="client_address" autocomplete="street-address"></div>
+      ${deliveryFields('client')}
       <div class="field"><label for="c-notes">Notas</label><textarea id="c-notes" name="notes" placeholder="Ej: horario de entrega, referencia…"></textarea></div>
       <p class="small muted" style="margin:0">Al realizar el pedido te mostraremos nuestro <strong style="color:var(--fg)">QR de pago</strong>.</p>
       <button class="btn solid" type="submit">Realizar pedido</button>`,
@@ -828,7 +926,8 @@ async function viewTrack(token) {
           ${order.items.map((it) => `<li><span>${it.quantity} × ${esc(it.perfume_name)}</span><span>${money(it.unit_price * it.quantity)}</span></li>`).join('')}
         </ul>
         <div class="cart-total big"><span>Total</span><span>${money(order.total)}</span></div>
-        <p class="small muted">${[order.client_name, order.client_phone, order.client_email, order.client_address].filter(Boolean).map(esc).join(' · ')}</p>
+        <p class="small muted">${[order.client_name, order.client_phone, order.client_email].filter(Boolean).map(esc).join(' · ')}</p>
+        ${order.delivery_method ? deliveryHtml(order) : order.client_address ? `<p class="small muted">${esc(order.client_address)}</p>` : ''}
         ${order.admin_note ? `<p class="small"><span class="muted">Mensaje de la tienda:</span> ${esc(order.admin_note)}</p>` : ''}
         <h3 style="margin-top:1.5rem">Historial</h3>
         <ul class="timeline">
@@ -899,7 +998,8 @@ function orderCard(o, { admin = false, statuses = [] } = {}) {
         <ul class="order-items">
           ${o.items.map((it) => `<li><span>${it.quantity} × ${esc(it.perfume_name)}</span><span>${money(it.unit_price * it.quantity)}</span></li>`).join('')}
         </ul>
-        ${phone || o.client_address || o.client_email ? `<div class="small muted">${[phone, admin && o.client_email ? `<a href="mailto:${esc(o.client_email)}" style="text-decoration:underline">${esc(o.client_email)}</a>` : '', esc(o.client_address || '')].filter(Boolean).join(' · ')}</div>` : ''}
+        ${phone || o.client_email ? `<div class="small muted">${[phone, admin && o.client_email ? `<a href="mailto:${esc(o.client_email)}" style="text-decoration:underline">${esc(o.client_email)}</a>` : ''].filter(Boolean).join(' · ')}</div>` : ''}
+        ${o.delivery_method ? deliveryHtml(o) : o.client_address ? `<div class="small muted">${esc(o.client_address)}</div>` : ''}
         ${o.notes ? `<div class="small"><span class="muted">Notas:</span> ${esc(o.notes)}</div>` : ''}
         ${o.admin_note ? `<div class="small"><span class="muted">Nota del administrador:</span> ${esc(o.admin_note)}</div>` : ''}
         ${admin && o.payment_proof ? `<div class="small"><a href="${esc(o.payment_proof)}" target="_blank" rel="noopener" class="btn sm">Ver comprobante de pago</a></div>` : ''}

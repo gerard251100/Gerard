@@ -196,7 +196,9 @@ route('POST', '/api/register', async (ctx) => {
   const name = text(b.name, 100);
   const email = text(b.email, 150).toLowerCase();
   const password = String(b.password || '');
+  const city = text(b.city, 80);
   if (!name || !email || !password) throw new HttpError(400, 'Nombre, correo y contraseña son obligatorios');
+  if (!city) throw new HttpError(400, 'Elige tu ciudad');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Correo electrónico inválido');
   if (password.length < 6) throw new HttpError(400, 'La contraseña debe tener al menos 6 caracteres');
   if (db.prepare('SELECT id FROM users WHERE email = ?').get(email)) {
@@ -205,7 +207,7 @@ route('POST', '/api/register', async (ctx) => {
   db.prepare(
     `INSERT INTO users (name, email, phone, city, message, password_hash, role, status)
      VALUES (?, ?, ?, ?, ?, ?, 'vendor', 'pending')`
-  ).run(name, email, text(b.phone, 40), text(b.city, 80), text(b.message, 1000), hashPassword(password));
+  ).run(name, email, text(b.phone, 40), city, text(b.message, 1000), hashPassword(password));
   return { ok: true, message: 'Solicitud enviada. El administrador revisará tu registro.' };
 });
 
@@ -293,6 +295,31 @@ function loadOrder(id) {
   return order;
 }
 
+// Forma de entrega: recojo en tienda, envío a domicilio (Santa Cruz) o envío a otra ciudad.
+const DELIVERY_METHODS = ['recojo', 'domicilio', 'envio'];
+function readDelivery(b) {
+  const method = DELIVERY_METHODS.includes(b.delivery_method) ? b.delivery_method : null;
+  if (!method) throw new HttpError(400, 'Elige cómo quieres recibir el pedido');
+  const d = { method, city: null, address: null, recipientName: null, recipientCi: null, recipientPhone: null };
+  if (method === 'domicilio') {
+    d.city = 'Santa Cruz';
+    d.address = text(b.client_address, 250);
+    if (!d.address) throw new HttpError(400, 'Escribe la dirección de entrega');
+  } else if (method === 'envio') {
+    d.city = text(b.delivery_city, 80);
+    d.recipientName = text(b.recipient_name, 120);
+    d.recipientCi = text(b.recipient_ci, 30);
+    d.recipientPhone = text(b.recipient_phone, 40);
+    d.address = text(b.client_address, 250);
+    if (!d.city) throw new HttpError(400, 'Escribe la ciudad de destino');
+    if (!d.recipientName || !d.recipientCi || !d.recipientPhone) {
+      throw new HttpError(400, 'Completa el nombre, CI y celular de quien recibe el envío');
+    }
+    if (!d.address) throw new HttpError(400, 'Escribe la dirección o agencia de destino');
+  }
+  return d;
+}
+
 // Crea un pedido. vendor = null para los pedidos directos de clientes (sin comisión).
 function createOrder(b, vendor) {
   const clientName = text(b.client_name, 120);
@@ -301,6 +328,7 @@ function createOrder(b, vendor) {
   if (!vendor && !phone) throw new HttpError(400, 'Escribe tu número de celular para coordinar la entrega');
   const email = text(b.client_email, 150).toLowerCase();
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'El correo electrónico no es válido');
+  const delivery = readDelivery(b);
   if (!Array.isArray(b.items) || !b.items.length) throw new HttpError(400, 'El carrito está vacío');
   if (b.items.length > 50) throw new HttpError(400, 'Demasiados productos en un solo pedido');
 
@@ -320,8 +348,9 @@ function createOrder(b, vendor) {
   return transaction(() => {
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO orders (vendor_id, source, track_token, client_name, client_phone, client_email, client_address, notes, total, total_commission)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO orders (vendor_id, source, track_token, client_name, client_phone, client_email, client_address, notes, total, total_commission,
+                             delivery_method, delivery_city, recipient_name, recipient_ci, recipient_phone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         vendor ? vendor.id : null,
@@ -330,10 +359,15 @@ function createOrder(b, vendor) {
         clientName,
         phone,
         email || null,
-        text(b.client_address, 250),
+        delivery.address,
         text(b.notes, 1000),
         Math.round(total * 100) / 100,
-        Math.round(totalCommission * 100) / 100
+        Math.round(totalCommission * 100) / 100,
+        delivery.method,
+        delivery.city,
+        delivery.recipientName,
+        delivery.recipientCi,
+        delivery.recipientPhone
       );
     const insertItem = db.prepare(
       `INSERT INTO order_items (order_id, perfume_id, perfume_name, quantity, unit_price, unit_commission)
@@ -479,6 +513,11 @@ function publicOrder(o) {
     client_phone: o.client_phone,
     client_email: o.client_email,
     client_address: o.client_address,
+    delivery_method: o.delivery_method,
+    delivery_city: o.delivery_city,
+    recipient_name: o.recipient_name,
+    recipient_ci: o.recipient_ci,
+    recipient_phone: o.recipient_phone,
     notes: o.notes,
     status: o.status,
     admin_note: o.admin_note,

@@ -673,3 +673,17 @@ body.soon-mode { padding-bottom: 0; }
   .cd-sep { display: none; }
   .cd-title { text-align: center; }
 }
+
+/* ---- Forma de entrega y ciudad ---- */
+.delivery-opts { display: grid; gap: 0.5rem; }
+.delivery-opt { text-transform: none; letter-spacing: normal; font-size: 0.95rem; color: var(--fg); display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem 0.9rem; border: 1px solid var(--line-soft); cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+.delivery-opt:hover { border-color: var(--fg); }
+.delivery-opt input { width: auto; margin: 0; accent-color: var(--fg); flex: 0 0 auto; }
+.delivery-opt span { display: flex; flex-direction: column; gap: 0.15rem; }
+.delivery-opt strong { font-weight: 500; letter-spacing: 0.04em; }
+.delivery-opt small { color: var(--muted); font-size: 0.8rem; letter-spacing: normal; text-transform: none; }
+.delivery-opt:has(input:checked) { border-color: var(--fg); background: rgba(255, 255, 255, 0.06); }
+.delivery-extra { display: grid; gap: 0.9rem; padding: 0.9rem; border-left: 1px solid var(--fg); animation: fadeUp 0.3s ease; }
+.delivery-extra[hidden], .city-other[hidden] { display: none; }
+.city-other { margin-top: 0.5rem; }
+.delivery-line { font-size: 0.88rem; }
