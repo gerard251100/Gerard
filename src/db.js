@@ -119,6 +119,7 @@ addCol('source', "TEXT NOT NULL DEFAULT 'vendedor'");
 addCol('payment_status', "TEXT NOT NULL DEFAULT 'pendiente'");
 addCol('payment_proof', 'TEXT');
 addCol('track_token', 'TEXT');
+addCol('client_email', 'TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_token ON orders(track_token)');
 
 db.exec(`

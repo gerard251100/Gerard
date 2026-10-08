@@ -10,6 +10,8 @@ const { hashPassword, verifyPassword, newToken } = require('./src/security');
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const { UPLOAD_DIR, STORE_DIR } = require('./src/paths');
+const { sendMail } = require('./src/mail');
+const { orderEmail } = require('./src/order-email');
 const SESSION_DAYS = 7;
 const MAX_BODY = 6 * 1024 * 1024;
 
@@ -244,6 +246,8 @@ function createOrder(b, vendor) {
   if (!clientName) throw new HttpError(400, vendor ? 'El nombre del cliente es obligatorio' : 'Escribe tu nombre');
   const phone = text(b.client_phone, 40);
   if (!vendor && !phone) throw new HttpError(400, 'Escribe tu número de celular para coordinar la entrega');
+  const email = text(b.client_email, 150).toLowerCase();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'El correo electrónico no es válido');
   if (!Array.isArray(b.items) || !b.items.length) throw new HttpError(400, 'El carrito está vacío');
   if (b.items.length > 50) throw new HttpError(400, 'Demasiados productos en un solo pedido');
 
@@ -258,13 +262,13 @@ function createOrder(b, vendor) {
 
   const total = items.reduce((sum, { p, qty }) => sum + p.suggested_price * qty, 0);
   const totalCommission = items.reduce((sum, { commission, qty }) => sum + commission * qty, 0);
-  const token = vendor ? null : newToken();
+  const token = newToken(); // enlace de seguimiento (también para los clientes de los vendedores)
 
   return transaction(() => {
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO orders (vendor_id, source, track_token, client_name, client_phone, client_address, notes, total, total_commission)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO orders (vendor_id, source, track_token, client_name, client_phone, client_email, client_address, notes, total, total_commission)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         vendor ? vendor.id : null,
@@ -272,6 +276,7 @@ function createOrder(b, vendor) {
         token,
         clientName,
         phone,
+        email || null,
         text(b.client_address, 250),
         text(b.notes, 1000),
         Math.round(total * 100) / 100,
@@ -294,7 +299,93 @@ function createOrder(b, vendor) {
 
 route('POST', '/api/orders', async (ctx) => {
   const vendor = requireVendor(ctx);
-  return { order: loadOrder(createOrder(ctx.body, vendor)) };
+  const id = createOrder(ctx.body, vendor);
+  notifyOrder(id, 'created'); // en segundo plano
+  return { order: loadOrder(id) };
+});
+
+// ---- Correos al cliente
+
+const MAIL_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_name', 'site_url'];
+
+function getMailConfig() {
+  const out = { smtp_host: 'smtp.gmail.com', smtp_port: '465', smtp_user: '', smtp_pass: '', smtp_name: 'Distinto SCZ', site_url: '' };
+  for (const row of db.prepare('SELECT key, value FROM settings').all()) {
+    if (MAIL_KEYS.includes(row.key) && row.value) out[row.key] = row.value;
+  }
+  return out;
+}
+
+function mailEnabled(cfg = getMailConfig()) {
+  return Boolean(cfg.smtp_user && cfg.smtp_pass);
+}
+
+async function deliver(to, subject, html) {
+  const cfg = getMailConfig();
+  await sendMail(
+    { host: cfg.smtp_host, port: cfg.smtp_port, user: cfg.smtp_user, pass: cfg.smtp_pass, name: cfg.smtp_name },
+    { to, subject, html }
+  );
+}
+
+// Avisa al cliente por correo. Devuelve 'sent', 'no-email', 'off' o el mensaje de error.
+async function notifyOrder(id, kind) {
+  const order = loadOrder(id);
+  if (!order || !order.client_email) return 'no-email';
+  const cfg = getMailConfig();
+  if (!mailEnabled(cfg)) return 'off';
+  const base = (publicUrl || cfg.site_url || '').replace(/\/+$/, '');
+  const link = base && order.track_token ? `${base}/#/pedido/${order.track_token}` : '';
+  const { subject, html } = orderEmail(order, kind, link);
+  try {
+    await deliver(order.client_email, subject, html);
+    return 'sent';
+  } catch (err) {
+    console.log(`  No se pudo enviar el correo del pedido #${id}: ${err.message}`);
+    return err.message;
+  }
+}
+
+route('GET', '/api/admin/mail', async (ctx) => {
+  requireAdmin(ctx);
+  const { smtp_pass, ...cfg } = getMailConfig();
+  return { mail: { ...cfg, has_password: Boolean(smtp_pass), enabled: mailEnabled() } };
+});
+
+route('PUT', '/api/admin/mail', async (ctx) => {
+  requireAdmin(ctx);
+  const b = ctx.body;
+  const upsert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+  const user = text(b.smtp_user, 150).toLowerCase();
+  if (user && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user)) throw new HttpError(400, 'El correo de la tienda no es válido');
+  const port = Math.floor(Number(b.smtp_port)) || 465;
+  transaction(() => {
+    upsert.run('smtp_user', user);
+    upsert.run('smtp_name', text(b.smtp_name, 80) || 'Distinto SCZ');
+    upsert.run('smtp_host', text(b.smtp_host, 120) || 'smtp.gmail.com');
+    upsert.run('smtp_port', String(port));
+    upsert.run('site_url', text(b.site_url, 300));
+    if (b.smtp_pass) upsert.run('smtp_pass', String(b.smtp_pass).replace(/\s+/g, '').slice(0, 200));
+    if (b.clear) upsert.run('smtp_pass', '');
+  });
+  const { smtp_pass, ...cfg } = getMailConfig();
+  return { mail: { ...cfg, has_password: Boolean(smtp_pass), enabled: mailEnabled() } };
+});
+
+route('POST', '/api/admin/mail/test', async (ctx) => {
+  requireAdmin(ctx);
+  const to = text(ctx.body.to, 150);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new HttpError(400, 'Escribe un correo válido para la prueba');
+  if (!mailEnabled()) throw new HttpError(400, 'Primero guarda el correo y la contraseña de aplicación');
+  try {
+    await deliver(to, 'Correo de prueba · Distinto SCZ', orderEmail({
+      id: 0, client_name: 'Distinto SCZ', status: 'confirmado', payment_status: 'pagado', total: 0,
+      admin_note: 'Si ves este correo, los avisos a tus clientes funcionan.', items: [],
+    }, 'status', '').html);
+  } catch (err) {
+    throw new HttpError(400, `No se pudo enviar: ${err.message}`);
+  }
+  return { ok: true };
 });
 
 // ---- Pedidos directos de clientes (sin cuenta)
@@ -305,6 +396,7 @@ function publicOrder(o) {
     token: o.track_token,
     client_name: o.client_name,
     client_phone: o.client_phone,
+    client_email: o.client_email,
     client_address: o.client_address,
     notes: o.notes,
     status: o.status,
@@ -326,6 +418,7 @@ function orderByToken(token) {
 
 route('POST', '/api/public/orders', async (ctx) => {
   const id = createOrder(ctx.body, null);
+  notifyOrder(id, 'created'); // en segundo plano: el cliente no espera al correo
   return { order: publicOrder(loadOrder(id)) };
 });
 
@@ -395,7 +488,8 @@ route('PATCH', '/api/orders/:id/payment', async (ctx) => {
       status === 'pagado' ? 'Pago confirmado' : 'Pago marcado como pendiente'
     );
   });
-  return { order: loadOrder(id) };
+  const email = status === 'pagado' ? await notifyOrder(id, 'paid') : 'no-email';
+  return { order: loadOrder(id), email };
 });
 
 // ---- Ajustes de la tienda (QR de pago, WhatsApp)
@@ -489,7 +583,8 @@ route('PATCH', '/api/orders/:id/status', async (ctx) => {
     );
     db.prepare('INSERT INTO order_history (order_id, status, note) VALUES (?, ?, ?)').run(id, status, note || null);
   });
-  return { order: loadOrder(id) };
+  const email = await notifyOrder(id, 'status');
+  return { order: loadOrder(id), email };
 });
 
 route('POST', '/api/orders/:id/cancel', async (ctx) => {

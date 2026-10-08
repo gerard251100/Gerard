@@ -126,6 +126,16 @@ function badge(status, labels = STATUS_LABELS) {
 }
 
 // "Pago en revisión": el cliente ya subió su comprobante y falta que la tienda lo confirme.
+// Agrega al aviso si se pudo enviar el correo al cliente.
+function emailNote(result) {
+  if (result === 'sent') return ' · correo enviado al cliente';
+  return '';
+}
+function emailWarning(result) {
+  if (!result || ['sent', 'no-email', 'off'].includes(result)) return;
+  setTimeout(() => toast(`No se pudo enviar el correo al cliente: ${result}`, true), 3300);
+}
+
 function payBadge(status, hasProof = false) {
   if (status === 'pendiente' && hasProof) return '<span class="badge pay-revision">Pago en revisión</span>';
   return `<span class="badge pay-${esc(status)}">${esc(PAYMENT_LABELS[status] || status)}</span>`;
@@ -704,6 +714,7 @@ async function vendorCart(body) {
       <h3>Datos del cliente</h3>
       <div class="field"><label for="c-name">Nombre del cliente *</label><input id="c-name" name="client_name" required maxlength="120"></div>
       <div class="field"><label for="c-phone">Teléfono</label><input id="c-phone" name="client_phone" type="tel"></div>
+      <div class="field"><label for="c-email">Correo del cliente (opcional)</label><input id="c-email" name="client_email" type="email" autocomplete="off" placeholder="Para avisarle el estado del pedido"></div>
       <div class="field"><label for="c-addr">Dirección de entrega</label><input id="c-addr" name="client_address"></div>
       <div class="field"><label for="c-notes">Notas</label><textarea id="c-notes" name="notes"></textarea></div>
       <button class="btn solid" type="submit">Enviar pedido</button>`,
@@ -731,6 +742,8 @@ async function viewShopCart() {
       <h3>Tus datos</h3>
       <div class="field"><label for="c-name">Nombre completo *</label><input id="c-name" name="client_name" required maxlength="120" autocomplete="name"></div>
       <div class="field"><label for="c-phone">Celular / WhatsApp *</label><input id="c-phone" name="client_phone" type="tel" required autocomplete="tel" placeholder="Ej: 70012345"></div>
+      <div class="field"><label for="c-email">Correo electrónico (opcional)</label><input id="c-email" name="client_email" type="email" autocomplete="email" inputmode="email" placeholder="tucorreo@gmail.com">
+        <span class="small muted">Te enviaremos el estado de tu pedido cada vez que cambie.</span></div>
       <div class="field"><label for="c-addr">Dirección o zona de entrega</label><input id="c-addr" name="client_address" autocomplete="street-address"></div>
       <div class="field"><label for="c-notes">Notas</label><textarea id="c-notes" name="notes" placeholder="Ej: horario de entrega, referencia…"></textarea></div>
       <p class="small muted" style="margin:0">Al realizar el pedido te mostraremos nuestro <strong style="color:var(--fg)">QR de pago</strong>.</p>
@@ -809,7 +822,7 @@ async function viewTrack(token) {
           ${order.items.map((it) => `<li><span>${it.quantity} × ${esc(it.perfume_name)}</span><span>${money(it.unit_price * it.quantity)}</span></li>`).join('')}
         </ul>
         <div class="cart-total big"><span>Total</span><span>${money(order.total)}</span></div>
-        <p class="small muted">${[order.client_name, order.client_phone, order.client_address].filter(Boolean).map(esc).join(' · ')}</p>
+        <p class="small muted">${[order.client_name, order.client_phone, order.client_email, order.client_address].filter(Boolean).map(esc).join(' · ')}</p>
         ${order.admin_note ? `<p class="small"><span class="muted">Mensaje de la tienda:</span> ${esc(order.admin_note)}</p>` : ''}
         <h3 style="margin-top:1.5rem">Historial</h3>
         <ul class="timeline">
@@ -880,7 +893,7 @@ function orderCard(o, { admin = false, statuses = [] } = {}) {
         <ul class="order-items">
           ${o.items.map((it) => `<li><span>${it.quantity} × ${esc(it.perfume_name)}</span><span>${money(it.unit_price * it.quantity)}</span></li>`).join('')}
         </ul>
-        ${phone || o.client_address ? `<div class="small muted">${[phone, esc(o.client_address || '')].filter(Boolean).join(' · ')}</div>` : ''}
+        ${phone || o.client_address || o.client_email ? `<div class="small muted">${[phone, admin && o.client_email ? `<a href="mailto:${esc(o.client_email)}" style="text-decoration:underline">${esc(o.client_email)}</a>` : '', esc(o.client_address || '')].filter(Boolean).join(' · ')}</div>` : ''}
         ${o.notes ? `<div class="small"><span class="muted">Notas:</span> ${esc(o.notes)}</div>` : ''}
         ${o.admin_note ? `<div class="small"><span class="muted">Nota del administrador:</span> ${esc(o.admin_note)}</div>` : ''}
         ${admin && o.payment_proof ? `<div class="small"><a href="${esc(o.payment_proof)}" target="_blank" rel="noopener" class="btn sm">Ver comprobante de pago</a></div>` : ''}
@@ -1248,8 +1261,9 @@ async function adminOrders(body, _s, filter = '', source = '') {
   $$('[data-filter]', body).forEach((c) => c.addEventListener('click', () => adminOrders(body, null, c.dataset.filter, source)));
   $$('[data-detail]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, () => showOrderHistory(b.dataset.detail))));
   $$('[data-pay]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, async () => {
-    await api(`/api/orders/${b.dataset.pay}/payment`, { method: 'PATCH', body: { payment_status: b.dataset.payTo } });
-    toast(b.dataset.payTo === 'pagado' ? `Pago del pedido #${b.dataset.pay} confirmado` : 'Pago marcado como pendiente');
+    const { email } = await api(`/api/orders/${b.dataset.pay}/payment`, { method: 'PATCH', body: { payment_status: b.dataset.payTo } });
+    toast(b.dataset.payTo === 'pagado' ? `Pago del pedido #${b.dataset.pay} confirmado${emailNote(email)}` : 'Pago marcado como pendiente');
+    emailWarning(email);
     reload();
   })));
   $$('[data-save-status]', body).forEach((b) => b.addEventListener('click', () => {
@@ -1266,9 +1280,10 @@ async function adminOrders(body, _s, filter = '', source = '') {
     $('#statusForm', root).addEventListener('submit', (e) => {
       e.preventDefault();
       withBusy(e.submitter, async () => {
-        await api(`/api/orders/${id}/status`, { method: 'PATCH', body: { status, note: e.target.note.value } });
+        const { email } = await api(`/api/orders/${id}/status`, { method: 'PATCH', body: { status, note: e.target.note.value } });
         closeModal();
-        toast(`Pedido #${id}: ${STATUS_LABELS[status]}`);
+        toast(`Pedido #${id}: ${STATUS_LABELS[status]}${emailNote(email)}`);
+        emailWarning(email);
         reload();
       });
     });
@@ -1316,11 +1331,73 @@ async function renderShareCard(card) {
   }));
 }
 
+// Configuración del correo de la tienda (Gmail) para avisar a los clientes.
+async function renderMailCard(form) {
+  const { mail } = await api('/api/admin/mail');
+  form.innerHTML = `
+    <div class="eyebrow" style="margin:0">Avisos por correo</div>
+    <h3 style="margin:0">Correos a tus clientes ${mail.enabled ? '<span class="badge approved">Activo</span>' : '<span class="badge">Apagado</span>'}</h3>
+    <p class="small muted" style="margin:0">Si el cliente deja su correo, le llega un aviso al hacer el pedido, cuando confirmas el pago y cada vez que cambias el estado.</p>
+    <details class="mail-help">
+      <summary class="small">Cómo obtener la contraseña de aplicación de Gmail (5 minutos)</summary>
+      <ol class="small muted">
+        <li>Entra a tu cuenta de Google (la del correo de la tienda) y activa la <strong style="color:var(--fg)">Verificación en 2 pasos</strong>.</li>
+        <li>Abre <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener" style="text-decoration:underline">myaccount.google.com/apppasswords</a>.</li>
+        <li>Escribe un nombre, por ejemplo <em>Distinto SCZ</em>, y presiona <strong style="color:var(--fg)">Crear</strong>.</li>
+        <li>Copia la contraseña de 16 letras que aparece y pégala aquí abajo.</li>
+      </ol>
+    </details>
+    <div class="form-grid">
+      <div class="field"><label for="m-user">Gmail de la tienda</label><input id="m-user" name="smtp_user" type="email" placeholder="tienda@gmail.com" value="${esc(mail.smtp_user)}"></div>
+      <div class="field"><label for="m-pass">Contraseña de aplicación</label><input id="m-pass" name="smtp_pass" type="password" autocomplete="new-password" placeholder="${mail.has_password ? '•••• guardada (escribe para cambiarla)' : 'xxxx xxxx xxxx xxxx'}"></div>
+      <div class="field full"><label for="m-name">Nombre que verá el cliente</label><input id="m-name" name="smtp_name" value="${esc(mail.smtp_name)}"></div>
+    </div>
+    <details class="mail-help">
+      <summary class="small">Opciones avanzadas</summary>
+      <div class="form-grid" style="margin-top:0.8rem">
+        <div class="field"><label for="m-host">Servidor SMTP</label><input id="m-host" name="smtp_host" value="${esc(mail.smtp_host)}"></div>
+        <div class="field"><label for="m-port">Puerto</label><input id="m-port" name="smtp_port" type="number" value="${esc(mail.smtp_port)}"></div>
+        <div class="field full"><label for="m-site">Dirección pública de la página (para el botón "Ver mi pedido")</label>
+          <input id="m-site" name="site_url" placeholder="Se usa sola el enlace de COMPARTIR.bat si está activo" value="${esc(mail.site_url)}"></div>
+      </div>
+    </details>
+    <div class="btn-row">
+      <button class="btn solid" type="submit">Guardar</button>
+      ${mail.has_password ? '<button class="btn ghost danger" type="button" id="mailOff">Desactivar</button>' : ''}
+    </div>
+    <div class="mail-test">
+      <input id="m-test" type="email" placeholder="Correo para la prueba" value="${esc(mail.smtp_user)}">
+      <button class="btn" type="button" id="mailTest" ${mail.enabled ? '' : 'disabled'}>Enviar prueba</button>
+    </div>`;
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    withBusy(e.submitter, async () => {
+      await api('/api/admin/mail', { method: 'PUT', body: formData(form) });
+      toast('Correo guardado');
+      renderMailCard(form);
+    });
+  };
+  $('#mailOff', form)?.addEventListener('click', (e) => {
+    if (!confirm('¿Desactivar los avisos por correo?')) return;
+    withBusy(e.currentTarget, async () => {
+      await api('/api/admin/mail', { method: 'PUT', body: { ...formData(form), clear: true } });
+      toast('Avisos por correo desactivados');
+      renderMailCard(form);
+    });
+  });
+  $('#mailTest', form).addEventListener('click', (e) => withBusy(e.currentTarget, async () => {
+    toast('Enviando correo de prueba…');
+    await api('/api/admin/mail/test', { method: 'POST', body: { to: $('#m-test', form).value } });
+    toast('Correo de prueba enviado. Revisa tu bandeja (y la carpeta de spam).');
+  }));
+}
+
 async function adminAccount(body) {
   settingsCache = null;
   const settings = await getSettings();
   body.innerHTML = `
     <div class="card share-card" id="shareCard"></div>
+    <form class="card form mail-card" id="mailForm"></form>
     <div class="account-grid">
       <form class="card form" id="storeForm">
         <h3>Pagos de la tienda</h3>
@@ -1340,6 +1417,7 @@ async function adminAccount(body) {
       </form>
     </div>`;
   renderShareCard($('#shareCard'));
+  renderMailCard($('#mailForm'));
   let newQr = null;
   $('#qrFile').addEventListener('change', (e) => withBusy(null, async () => {
     const data = await readImageFile(e.target.files[0]);

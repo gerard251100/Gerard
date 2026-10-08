@@ -627,3 +627,10 @@ input[type=file]::file-selector-button:hover { background: transparent; color: v
 .review-check { border-color: #9cc7f5; color: #9cc7f5; }
 .link-btn { display: inline-block; margin-top: 0.4rem; color: var(--muted); font-size: 0.82rem; letter-spacing: normal; text-transform: none; text-decoration: underline; cursor: pointer; }
 .link-btn:hover { color: var(--fg); }
+
+/* ---------- Avisos por correo ---------- */
+.mail-card { margin-bottom: 2rem; }
+.mail-help summary { cursor: pointer; color: var(--fg); padding: 0.2rem 0; }
+.mail-help ol { margin: 0.6rem 0 0; padding-left: 1.2rem; display: grid; gap: 0.3rem; }
+.mail-test { display: flex; gap: 0.5rem; flex-wrap: wrap; padding-top: 0.9rem; border-top: 1px solid var(--line-soft); }
+.mail-test input { flex: 1 1 220px; }
