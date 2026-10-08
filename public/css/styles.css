@@ -381,3 +381,13 @@ tr.me td { background: rgba(255, 255, 255, 0.06); }
   .reveal { opacity: 1; transform: none; }
   .hero-name .word { opacity: 1; transform: none; }
 }
+
+/* ---------- Selector de imagen ---------- */
+.img-preview[hidden] { display: none; }
+input[type=file] { padding: 0.5rem; cursor: pointer; color: var(--muted); }
+input[type=file]::file-selector-button {
+  margin-right: 0.9rem; padding: 0.55rem 1rem; cursor: pointer;
+  font: inherit; font-size: 0.7rem; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--bg); background: var(--fg); border: 1px solid var(--fg); transition: background 0.2s, color 0.2s;
+}
+input[type=file]::file-selector-button:hover { background: transparent; color: var(--fg); }
