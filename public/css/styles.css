@@ -634,3 +634,7 @@ input[type=file]::file-selector-button:hover { background: transparent; color: v
 .mail-help ol { margin: 0.6rem 0 0; padding-left: 1.2rem; display: grid; gap: 0.3rem; }
 .mail-test { display: flex; gap: 0.5rem; flex-wrap: wrap; padding-top: 0.9rem; border-top: 1px solid var(--line-soft); }
 .mail-test input { flex: 1 1 220px; }
+.setup-steps { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.7rem; color: #d6d6d6; }
+.setup-steps a { text-decoration: underline; color: var(--fg); }
+.setup-steps strong { color: var(--fg); }
+.code-box { margin: 0.5rem 0; padding: 0.8rem; max-height: 220px; overflow: auto; background: #0b0b0b; border: 1px solid var(--line-soft); color: #e8e8e8; font-size: 0.78rem; line-height: 1.45; white-space: pre; }

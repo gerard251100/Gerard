@@ -21,7 +21,7 @@ Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, ada
   - Catálogo: agregar, editar, ocultar o eliminar perfumes, con imagen por URL o archivo subido.
   - Pedidos de clientes directos y de vendedores, con filtros: confirmar el pago, ver el comprobante, escribir al cliente por WhatsApp y cambiar el estado (Pendiente, Confirmado, En preparación, Enviado, Entregado o Cancelado) con una nota, y eliminar pedidos (uno por uno o varios a la vez, por ejemplo los de prueba).
   - Pagos y cuenta: cambiar el QR de pago, el WhatsApp de la tienda y la contraseña.
-  - **Avisos por correo**: si el cliente deja su correo, recibe un aviso al hacer el pedido, al confirmarse el pago y cada vez que cambia el estado (se envía desde un Gmail de la tienda con una contraseña de aplicación).
+  - **Avisos por correo**: si el cliente deja su correo, recibe un aviso al hacer el pedido, al confirmarse el pago y cada vez que cambia el estado (se envía desde el Gmail de la tienda con **Google Apps Script**, sin contraseña de aplicación, siguiendo los pasos del panel; también se puede usar SMTP con contraseña de aplicación).
   - Ranking por mes, con la comisión de cada vendedor.
   - Cambio de contraseña.
 

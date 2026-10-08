@@ -165,3 +165,55 @@ async function sendMail(config, { to, subject, html }) {
 }
 
 module.exports = { sendMail, buildMessage };
+
+// ---- Envío por Google Apps Script (alternativa a la contraseña de aplicación)
+//
+// El script (que el administrador pega en script.google.com) recibe {clave, to, subject, html, name}
+// por POST y envía el correo con MailApp desde su propia cuenta de Gmail.
+const https = require('node:https');
+
+function httpsRequest(url, { method = 'GET', body = null } = {}, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request(u, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {},
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+          if (redirects > 5) return reject(new Error('demasiadas redirecciones'));
+          // Apps Script responde al POST con una redirección que se sigue con GET.
+          const keep = res.statusCode === 307 || res.statusCode === 308;
+          return resolve(httpsRequest(new URL(res.headers.location, url).toString(),
+            keep ? { method, body } : {}, redirects + 1));
+        }
+        resolve({ status: res.statusCode, text });
+      });
+      res.on('error', reject);
+    });
+    req.setTimeout(TIMEOUT, () => req.destroy(new Error('Google no respondio a tiempo')));
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+async function sendViaScript({ url, key, name }, { to, subject, html }) {
+  if (!url) throw new Error('Falta pegar la direccion del Apps Script');
+  const body = JSON.stringify({ clave: key, to, subject, html, name: name || 'Distinto SCZ' });
+  const { status, text } = await httpsRequest(url, { method: 'POST', body });
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* no es JSON */ }
+  if (data && data.ok) return;
+  if (data && data.error === 'clave') throw new Error('la clave del script no coincide: vuelve a copiar el codigo del panel');
+  if (data && data.error) throw new Error(`Google respondio: ${data.error}`);
+  if (/accounts\.google\.com|ServiceLogin/i.test(text)) {
+    throw new Error('el script no es publico: en "Quien tiene acceso" elige "Cualquier usuario"');
+  }
+  throw new Error(`respuesta inesperada de Google (codigo ${status})`);
+}
+
+module.exports.sendViaScript = sendViaScript;

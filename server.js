@@ -10,7 +10,7 @@ const { hashPassword, verifyPassword, newToken } = require('./src/security');
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const { UPLOAD_DIR, STORE_DIR } = require('./src/paths');
-const { sendMail } = require('./src/mail');
+const { sendMail, sendViaScript } = require('./src/mail');
 const { orderEmail } = require('./src/order-email');
 const SESSION_DAYS = 7;
 const MAX_BODY = 6 * 1024 * 1024;
@@ -306,22 +306,36 @@ route('POST', '/api/orders', async (ctx) => {
 
 // ---- Correos al cliente
 
-const MAIL_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_name', 'site_url'];
+// Dos formas de enviar: 'script' (Google Apps Script, no necesita contraseña de aplicación)
+// o 'smtp' (Gmail u otro servidor con contraseña de aplicación).
+const MAIL_KEYS = ['mail_mode', 'script_url', 'script_key', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_name', 'site_url'];
 
 function getMailConfig() {
-  const out = { smtp_host: 'smtp.gmail.com', smtp_port: '465', smtp_user: '', smtp_pass: '', smtp_name: 'Distinto SCZ', site_url: '' };
+  const out = {
+    mail_mode: '', script_url: '', script_key: '',
+    smtp_host: 'smtp.gmail.com', smtp_port: '465', smtp_user: '', smtp_pass: '', smtp_name: 'Distinto SCZ', site_url: '',
+  };
   for (const row of db.prepare('SELECT key, value FROM settings').all()) {
     if (MAIL_KEYS.includes(row.key) && row.value) out[row.key] = row.value;
+  }
+  if (!out.mail_mode) out.mail_mode = out.smtp_pass ? 'smtp' : 'script';
+  if (!out.script_key) {
+    out.script_key = crypto.randomBytes(12).toString('hex');
+    db.prepare("INSERT INTO settings (key, value) VALUES ('script_key', ?) ON CONFLICT(key) DO NOTHING").run(out.script_key);
   }
   return out;
 }
 
 function mailEnabled(cfg = getMailConfig()) {
-  return Boolean(cfg.smtp_user && cfg.smtp_pass);
+  return cfg.mail_mode === 'script' ? Boolean(cfg.script_url) : Boolean(cfg.smtp_user && cfg.smtp_pass);
 }
 
 async function deliver(to, subject, html) {
   const cfg = getMailConfig();
+  if (cfg.mail_mode === 'script') {
+    await sendViaScript({ url: cfg.script_url, key: cfg.script_key, name: cfg.smtp_name }, { to, subject, html });
+    return;
+  }
   await sendMail(
     { host: cfg.smtp_host, port: cfg.smtp_port, user: cfg.smtp_user, pass: cfg.smtp_pass, name: cfg.smtp_name },
     { to, subject, html }
@@ -359,14 +373,21 @@ route('PUT', '/api/admin/mail', async (ctx) => {
   const user = text(b.smtp_user, 150).toLowerCase();
   if (user && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user)) throw new HttpError(400, 'El correo de la tienda no es válido');
   const port = Math.floor(Number(b.smtp_port)) || 465;
+  const mode = b.mail_mode === 'smtp' ? 'smtp' : 'script';
+  const scriptUrl = text(b.script_url, 300);
+  if (scriptUrl && !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec\/?$/.test(scriptUrl)) {
+    throw new HttpError(400, 'La dirección del script debe ser la "URL de la aplicación web" que termina en /exec');
+  }
   transaction(() => {
+    upsert.run('mail_mode', mode);
+    if ('script_url' in b) upsert.run('script_url', scriptUrl);
     upsert.run('smtp_user', user);
     upsert.run('smtp_name', text(b.smtp_name, 80) || 'Distinto SCZ');
     upsert.run('smtp_host', text(b.smtp_host, 120) || 'smtp.gmail.com');
     upsert.run('smtp_port', String(port));
     upsert.run('site_url', text(b.site_url, 300));
     if (b.smtp_pass) upsert.run('smtp_pass', String(b.smtp_pass).replace(/\s+/g, '').slice(0, 200));
-    if (b.clear) upsert.run('smtp_pass', '');
+    if (b.clear) { upsert.run('smtp_pass', ''); upsert.run('script_url', ''); }
   });
   const { smtp_pass, ...cfg } = getMailConfig();
   return { mail: { ...cfg, has_password: Boolean(smtp_pass), enabled: mailEnabled() } };
@@ -376,7 +397,7 @@ route('POST', '/api/admin/mail/test', async (ctx) => {
   requireAdmin(ctx);
   const to = text(ctx.body.to, 150);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new HttpError(400, 'Escribe un correo válido para la prueba');
-  if (!mailEnabled()) throw new HttpError(400, 'Primero guarda el correo y la contraseña de aplicación');
+  if (!mailEnabled()) throw new HttpError(400, 'Primero completa y guarda la configuración del correo');
   try {
     await deliver(to, 'Correo de prueba · Distinto SCZ', orderEmail({
       id: 0, client_name: 'Distinto SCZ', status: 'confirmado', payment_status: 'pagado', total: 0,

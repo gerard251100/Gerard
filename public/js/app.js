@@ -1331,44 +1331,95 @@ async function renderShareCard(card) {
   }));
 }
 
-// Configuración del correo de la tienda (Gmail) para avisar a los clientes.
-async function renderMailCard(form) {
+// Código que el administrador pega en script.google.com (envía los correos desde su Gmail).
+function appsScriptCode(key) {
+  return `const CLAVE = '${key}';
+
+function doPost(e) {
+  const d = JSON.parse(e.postData.contents);
+  if (d.clave !== CLAVE) return responder({ ok: false, error: 'clave' });
+  MailApp.sendEmail({ to: d.to, subject: d.subject, body: d.subject, htmlBody: d.html, name: d.name || 'Distinto SCZ' });
+  return responder({ ok: true });
+}
+
+function responder(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function probar() {
+  MailApp.sendEmail(Session.getActiveUser().getEmail(), 'Distinto SCZ', 'El script de correos funciona.');
+}`;
+}
+
+// Configuración del correo de la tienda para avisar a los clientes.
+async function renderMailCard(form, modeOverride) {
   const { mail } = await api('/api/admin/mail');
+  const mode = modeOverride || mail.mail_mode;
+  const code = appsScriptCode(mail.script_key);
   form.innerHTML = `
     <div class="eyebrow" style="margin:0">Avisos por correo</div>
     <h3 style="margin:0">Correos a tus clientes ${mail.enabled ? '<span class="badge approved">Activo</span>' : '<span class="badge">Apagado</span>'}</h3>
     <p class="small muted" style="margin:0">Si el cliente deja su correo, le llega un aviso al hacer el pedido, cuando confirmas el pago y cada vez que cambias el estado.</p>
-    <details class="mail-help">
-      <summary class="small">Cómo obtener la contraseña de aplicación de Gmail (5 minutos)</summary>
-      <ol class="small muted">
-        <li>Entra a tu cuenta de Google (la del correo de la tienda) y activa la <strong style="color:var(--fg)">Verificación en 2 pasos</strong>.</li>
-        <li>Abre <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener" style="text-decoration:underline">myaccount.google.com/apppasswords</a>.</li>
-        <li>Escribe un nombre, por ejemplo <em>Distinto SCZ</em>, y presiona <strong style="color:var(--fg)">Crear</strong>.</li>
-        <li>Copia la contraseña de 16 letras que aparece y pégala aquí abajo.</li>
-      </ol>
-    </details>
-    <div class="form-grid">
-      <div class="field"><label for="m-user">Gmail de la tienda</label><input id="m-user" name="smtp_user" type="email" placeholder="tienda@gmail.com" value="${esc(mail.smtp_user)}"></div>
-      <div class="field"><label for="m-pass">Contraseña de aplicación</label><input id="m-pass" name="smtp_pass" type="password" autocomplete="new-password" placeholder="${mail.has_password ? '•••• guardada (escribe para cambiarla)' : 'xxxx xxxx xxxx xxxx'}"></div>
-      <div class="field full"><label for="m-name">Nombre que verá el cliente</label><input id="m-name" name="smtp_name" value="${esc(mail.smtp_name)}"></div>
+    <div class="chips">
+      <button type="button" class="chip ${mode === 'script' ? 'active' : ''}" data-mode="script">Con Google Apps Script (recomendado)</button>
+      <button type="button" class="chip ${mode === 'smtp' ? 'active' : ''}" data-mode="smtp">Con contraseña de aplicación</button>
     </div>
-    <details class="mail-help">
-      <summary class="small">Opciones avanzadas</summary>
-      <div class="form-grid" style="margin-top:0.8rem">
-        <div class="field"><label for="m-host">Servidor SMTP</label><input id="m-host" name="smtp_host" value="${esc(mail.smtp_host)}"></div>
-        <div class="field"><label for="m-port">Puerto</label><input id="m-port" name="smtp_port" type="number" value="${esc(mail.smtp_port)}"></div>
-        <div class="field full"><label for="m-site">Dirección pública de la página (para el botón "Ver mi pedido")</label>
-          <input id="m-site" name="site_url" placeholder="Se usa sola el enlace de COMPARTIR.bat si está activo" value="${esc(mail.site_url)}"></div>
+    <input type="hidden" name="mail_mode" value="${mode}">
+    ${mode === 'script' ? `
+      <ol class="setup-steps small">
+        <li>En Chrome, con la sesión de <strong>distintoscz@gmail.com</strong>, abre
+          <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com</a> (se crea un proyecto nuevo).</li>
+        <li>Borra todo lo que aparece y pega este código:
+          <pre class="code-box" id="scriptCode">${esc(code)}</pre>
+          <button type="button" class="btn sm" id="copyCode">Copiar código</button></li>
+        <li>Presiona el ícono de <strong>guardar</strong> 💾. Arriba, en la lista de funciones, elige <strong>probar</strong> y presiona <strong>▶ Ejecutar</strong>.
+          Google pedirá permiso: <em>Revisar permisos</em> → elige la cuenta → <em>Configuración avanzada</em> → <em>Ir a … (no seguro)</em> → <em>Permitir</em>.
+          Es tu propio script, por eso Google lo marca como "no verificado".</li>
+        <li>Arriba a la derecha: <strong>Implementar → Nueva implementación</strong>. En el engranaje ⚙ elige <strong>Aplicación web</strong>.
+          En <em>Ejecutar como</em>: <strong>Yo</strong>. En <em>Quién tiene acceso</em>: <strong>Cualquier usuario</strong>. Presiona <strong>Implementar</strong>.</li>
+        <li>Copia la <strong>URL de la aplicación web</strong> (termina en <code>/exec</code>) y pégala aquí:</li>
+      </ol>
+      <div class="field"><label for="m-script">URL de la aplicación web</label>
+        <input id="m-script" name="script_url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(mail.script_url)}"></div>
+      <div class="field"><label for="m-name">Nombre que verá el cliente</label><input id="m-name" name="smtp_name" value="${esc(mail.smtp_name)}"></div>`
+    : `
+      <details class="mail-help">
+        <summary class="small">Cómo obtener la contraseña de aplicación de Gmail</summary>
+        <ol class="small muted">
+          <li>Activa la <strong style="color:var(--fg)">Verificación en 2 pasos</strong> en tu cuenta de Google.</li>
+          <li>Abre <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener" style="text-decoration:underline">myaccount.google.com/apppasswords</a>, escribe <em>Distinto SCZ</em> y presiona <strong style="color:var(--fg)">Crear</strong>.</li>
+          <li>Copia la contraseña de 16 letras y pégala aquí. Si Google dice que la opción no está disponible, usa el método con Google Apps Script.</li>
+        </ol>
+      </details>
+      <div class="form-grid">
+        <div class="field"><label for="m-user">Gmail de la tienda</label><input id="m-user" name="smtp_user" type="email" placeholder="tienda@gmail.com" value="${esc(mail.smtp_user)}"></div>
+        <div class="field"><label for="m-pass">Contraseña de aplicación</label><input id="m-pass" name="smtp_pass" type="password" autocomplete="new-password" placeholder="${mail.has_password ? '•••• guardada (escribe para cambiarla)' : 'xxxx xxxx xxxx xxxx'}"></div>
+        <div class="field full"><label for="m-name">Nombre que verá el cliente</label><input id="m-name" name="smtp_name" value="${esc(mail.smtp_name)}"></div>
       </div>
+      <details class="mail-help">
+        <summary class="small">Opciones avanzadas</summary>
+        <div class="form-grid" style="margin-top:0.8rem">
+          <div class="field"><label for="m-host">Servidor SMTP</label><input id="m-host" name="smtp_host" value="${esc(mail.smtp_host)}"></div>
+          <div class="field"><label for="m-port">Puerto</label><input id="m-port" name="smtp_port" type="number" value="${esc(mail.smtp_port)}"></div>
+        </div>
+      </details>`}
+    <details class="mail-help">
+      <summary class="small">Dirección pública de la página (opcional)</summary>
+      <div class="field" style="margin-top:0.8rem"><label for="m-site">Para el botón "Ver mi pedido" del correo</label>
+        <input id="m-site" name="site_url" placeholder="Si usas COMPARTIR.bat, se usa ese enlace automáticamente" value="${esc(mail.site_url)}"></div>
     </details>
     <div class="btn-row">
       <button class="btn solid" type="submit">Guardar</button>
-      ${mail.has_password ? '<button class="btn ghost danger" type="button" id="mailOff">Desactivar</button>' : ''}
+      ${mail.enabled ? '<button class="btn ghost danger" type="button" id="mailOff">Desactivar</button>' : ''}
     </div>
     <div class="mail-test">
-      <input id="m-test" type="email" placeholder="Correo para la prueba" value="${esc(mail.smtp_user)}">
+      <input id="m-test" type="email" placeholder="Correo para la prueba" value="${esc(mail.smtp_user || '')}">
       <button class="btn" type="button" id="mailTest" ${mail.enabled ? '' : 'disabled'}>Enviar prueba</button>
     </div>`;
+  $$('[data-mode]', form).forEach((b) => b.addEventListener('click', () => renderMailCard(form, b.dataset.mode)));
+  $('#copyCode', form)?.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(code); toast('Código copiado'); } catch { prompt('Copia este código:', code); }
+  });
   form.onsubmit = (e) => {
     e.preventDefault();
     withBusy(e.submitter, async () => {
