@@ -740,12 +740,31 @@ server.on('error', (err) => {
   throw err;
 });
 
+// Direcciones de esta computadora en la red Wi-Fi/local, para abrir la página desde el celular.
+function lanAddresses() {
+  const isPrivate = (ip) => /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
+  const ips = [];
+  for (const list of Object.values(require('node:os').networkInterfaces())) {
+    for (const a of list || []) {
+      if (a.family === 'IPv4' && !a.internal && isPrivate(a.address)) ips.push(a.address);
+    }
+  }
+  // Las redes de casa suelen ser 192.168.x.x; se muestran primero.
+  return ips.sort((a, b) => Number(!a.startsWith('192.168.')) - Number(!b.startsWith('192.168.')));
+}
+
 server.listen(PORT, () => {
+  const lan = lanAddresses();
   console.log('');
   console.log('  ============================================');
   console.log('   DISTINTO SCZ esta encendida');
   console.log(`   Abre en tu navegador: ${SITE_URL}`);
   console.log('');
+  if (lan.length) {
+    console.log('   Desde tu celular (conectado al mismo Wi-Fi):');
+    for (const ip of lan) console.log(`     http://${ip}:${PORT}`);
+    console.log('');
+  }
   console.log('   NO cierres esta ventana mientras uses la pagina.');
   console.log('   Para apagarla, cierra esta ventana.');
   console.log('');
