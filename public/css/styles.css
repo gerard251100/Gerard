@@ -369,6 +369,7 @@ tr.me td { background: rgba(255, 255, 255, 0.06); }
 @media (max-width: 860px) {
   .hero.brand-hero { grid-template-columns: 1fr; text-align: center; }
   .hero.brand-hero .hero-actions { justify-content: center; }
+  .hero.brand-hero .cd-units { justify-content: center; }
   .hero.brand-hero .hero-rule { margin-left: auto; margin-right: auto; }
   .hero.brand-hero p { margin-left: auto; margin-right: auto; }
   .hero-visual { max-width: 280px; order: -1; }
@@ -652,3 +653,23 @@ body.soon-mode { padding-bottom: 0; }
 .launch-card.is-soon { border-color: var(--warn); }
 .launch-card.is-open { border-color: var(--ok); }
 @media (max-width: 720px) { .launch-card .btn { width: 100%; } .soon .soon-visual { max-width: 190px; } }
+
+/* ---- Cuenta regresiva del lanzamiento ---- */
+.countdown { margin: 1.4rem 0 0.4rem; }
+.cd-title { font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.8rem; }
+.cd-units { display: flex; align-items: flex-start; gap: 0.5rem; }
+.soon .cd-units { justify-content: center; }
+.cd-unit { display: flex; flex-direction: column; align-items: center; min-width: 4.2rem; padding: 0.7rem 0.4rem 0.55rem; border: 1px solid var(--fg); }
+.cd-num { font-family: 'Marcellus', serif; font-size: 2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.cd-num.tick { animation: cd-tick 0.45s ease; }
+.cd-label { margin-top: 0.4rem; font-size: 0.6rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+.cd-sep { font-family: 'Marcellus', serif; font-size: 1.6rem; padding-top: 0.75rem; color: var(--muted); }
+@keyframes cd-tick { from { opacity: 0.2; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .cd-num.tick { animation: none; } }
+@media (max-width: 720px) {
+  .cd-units { gap: 0.3rem; justify-content: center; }
+  .cd-unit { min-width: 0; flex: 1 1 0; padding: 0.55rem 0.2rem 0.45rem; }
+  .cd-num { font-size: 1.5rem; }
+  .cd-sep { display: none; }
+  .cd-title { text-align: center; }
+}

@@ -351,6 +351,7 @@ async function viewHome() {
         <div class="hero-tag"><span class="typed" id="typed"></span></div>
         <div class="hero-rule"></div>
         <p>Fragancias originales que hablan por ti. Elige tu perfume, haz tu pedido en línea y paga al instante con QR.</p>
+        ${countdownHTML()}
         <div class="hero-actions">
           <a class="btn solid" href="#/catalogo">Comprar ahora</a>
           ${panelLink}
@@ -385,6 +386,7 @@ async function viewHome() {
       <a class="btn solid" href="#/registro">Registrarme</a>
     </section>`}`;
   typeWriter($('#typed'), 'Tu fragancia, tu sello');
+  startCountdown();
   const { perfumes } = await api('/api/catalog');
   $('#featured').innerHTML = perfumes.length
     ? `<div class="grid carousel">${perfumes.slice(0, 8).map((p) => productCard(p, { mode })).join('')}</div>`
@@ -1622,6 +1624,44 @@ $('#year').textContent = new Date().getFullYear();
   router();
 })();
 
+/* ---- Cuenta regresiva para el lanzamiento (hora de Bolivia, UTC-4) ---- */
+const LAUNCH_AT = new Date('2026-10-10T20:00:00-04:00');
+let countdownTimer = null;
+
+function countdownHTML() {
+  if (Date.now() >= LAUNCH_AT) return '';
+  const unit = (key, label) => `<div class="cd-unit"><span class="cd-num" data-cd="${key}">00</span><span class="cd-label">${label}</span></div>`;
+  return `
+    <div class="countdown" id="countdown">
+      <div class="cd-title">Lanzamiento oficial · sábado 10 de octubre, 8:00 p.m.</div>
+      <div class="cd-units">${unit('d', 'Días')}<span class="cd-sep">:</span>${unit('h', 'Horas')}<span class="cd-sep">:</span>${unit('m', 'Minutos')}<span class="cd-sep">:</span>${unit('s', 'Segundos')}</div>
+    </div>`;
+}
+
+function startCountdown() {
+  clearInterval(countdownTimer);
+  const box = document.getElementById('countdown');
+  if (!box) return;
+  const tick = () => {
+    if (!document.body.contains(box)) { clearInterval(countdownTimer); return; }
+    const left = Math.max(0, LAUNCH_AT - Date.now());
+    if (!left) {
+      clearInterval(countdownTimer);
+      box.innerHTML = '<div class="cd-title">¡Ya abrimos!</div>';
+      return;
+    }
+    const sec = Math.floor(left / 1000);
+    const parts = { d: Math.floor(sec / 86400), h: Math.floor(sec / 3600) % 24, m: Math.floor(sec / 60) % 60, s: sec % 60 };
+    for (const [k, v] of Object.entries(parts)) {
+      const el = box.querySelector(`[data-cd="${k}"]`);
+      const txt = String(v).padStart(2, '0');
+      if (el.textContent !== txt) { el.textContent = txt; el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); }
+    }
+  };
+  tick();
+  countdownTimer = setInterval(tick, 1000);
+}
+
 function viewComingSoon() {
   const wa = settingsCache?.whatsapp ? waLink(settingsCache.whatsapp, 'Hola Distinto SCZ, quiero saber cuándo abren la tienda.') : '';
   app.innerHTML = `
@@ -1634,8 +1674,10 @@ function viewComingSoon() {
       <h1 class="hero-name">DISTINTO SCZ</h1>
       <div class="hero-tag"><span class="typed" id="typed"></span></div>
       <p class="muted">Estamos preparando una nueva experiencia en fragancias originales.<br>Muy pronto podrás hacer tus pedidos aquí.</p>
+      ${countdownHTML()}
       ${wa ? `<a class="btn solid" href="${esc(wa)}" target="_blank" rel="noopener">Escríbenos por WhatsApp</a>` : ''}
       <a class="soon-login" href="#/login">Acceso</a>
     </section>`;
   typeWriter($('#typed'), 'Tu fragancia, tu sello', 600);
+  startCountdown();
 }
