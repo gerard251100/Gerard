@@ -2,8 +2,9 @@
 
 // Dónde se guardan la base de datos y las imágenes.
 //
-// Por defecto se usa una carpeta fija en el usuario (~/DistintoSCZ-datos), fuera de la
-// carpeta de la página, para que al descargar una versión nueva no se pierda nada.
+// Por defecto se usa una carpeta fija en el usuario (~/DistintoSCZ-datos, o en Windows
+// %LOCALAPPDATA%\DistintoSCZ-datos si la primera no se puede usar), fuera de la carpeta
+// de la página, para que al descargar una versión nueva no se pierda nada.
 // En un hosting se puede cambiar con DATA_DIR / UPLOAD_DIR (o STORE_DIR para ambas).
 
 const fs = require('node:fs');
@@ -12,7 +13,40 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
 const APP_DIR = path.join(__dirname, '..');
-const STORE_DIR = process.env.STORE_DIR || path.join(os.homedir(), 'DistintoSCZ-datos');
+
+function canWrite(dir) {
+  try {
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'uploads'), { recursive: true });
+    const probe = path.join(dir, 'data', '.prueba-escritura');
+    fs.writeFileSync(probe, 'ok');
+    fs.rmSync(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Algunas computadoras (antivirus, "Acceso controlado a carpetas" de Windows) no dejan
+// escribir en la carpeta del usuario. Se prueban varios lugares y se usa el primero que
+// funcione; si ya hay datos guardados en alguno, se sigue usando ese.
+function chooseStoreDir() {
+  if (process.env.STORE_DIR) return process.env.STORE_DIR;
+  const candidates = [path.join(os.homedir(), 'DistintoSCZ-datos')];
+  if (process.env.LOCALAPPDATA) candidates.push(path.join(process.env.LOCALAPPDATA, 'DistintoSCZ-datos'));
+  const withData = candidates.find((dir) => fs.existsSync(path.join(dir, 'data', 'perfumeria.db')) && canWrite(dir));
+  if (withData) return withData;
+  const writable = candidates.find(canWrite);
+  if (writable) return writable;
+  // Último recurso: dentro de la carpeta de la página (como en las primeras versiones).
+  console.log('');
+  console.log('  Aviso: Windows no dejo crear la carpeta de datos fuera de la pagina.');
+  console.log('  Los datos se guardan en las carpetas "data" y "uploads" de esta carpeta:');
+  console.log('  copialas a la carpeta nueva cada vez que descargues una version nueva.');
+  return APP_DIR;
+}
+
+const STORE_DIR = chooseStoreDir();
 const DATA_DIR = process.env.DATA_DIR || path.join(STORE_DIR, 'data');
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(STORE_DIR, 'uploads');
 const DB_FILE = process.env.DB_FILE || path.join(DATA_DIR, 'perfumeria.db');
@@ -63,7 +97,11 @@ function adoptLegacyData() {
   console.log(`  Se trasladaron tus datos a ${STORE_DIR}`);
 }
 
-adoptLegacyData();
+try {
+  adoptLegacyData();
+} catch (err) {
+  console.log(`  Aviso: no se pudieron trasladar los datos antiguos (${err.message}).`);
+}
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 

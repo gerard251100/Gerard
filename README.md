@@ -37,7 +37,7 @@ Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con
 
 ### Dónde quedan tus datos
 
-Perfumes, vendedores, pedidos, fotos y comprobantes se guardan en la carpeta **`DistintoSCZ-datos`** dentro de tu usuario (en Windows: `C:\Users\TuNombre\DistintoSCZ-datos`). Está fuera de la carpeta de la página, así que puedes descargar versiones nuevas sin perder nada. Haz copias de esa carpeta de vez en cuando.
+Perfumes, vendedores, pedidos, fotos y comprobantes se guardan en la carpeta **`DistintoSCZ-datos`** dentro de tu usuario (en Windows: `C:\Users\TuNombre\DistintoSCZ-datos`). Si Windows o el antivirus no dejan escribir ahí, se usa `%LOCALAPPDATA%\DistintoSCZ-datos`, y como último recurso las carpetas `data` y `uploads` de la propia página. La ventana negra muestra siempre dónde se están guardando. Está fuera de la carpeta de la página, así que puedes descargar versiones nuevas sin perder nada. Haz copias de esa carpeta de vez en cuando.
 
 Si una versión anterior guardó los datos dentro de la carpeta de la página (`data` y `uploads`), se trasladan solos a `DistintoSCZ-datos` la primera vez que se enciende.
 
