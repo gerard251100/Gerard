@@ -1039,6 +1039,20 @@ window.addEventListener('scroll', () => {
 $('#year').textContent = new Date().getFullYear();
 
 (async function init() {
+  // Si se abrió index.html con doble clic, el servidor no está encendido y nada funciona.
+  if (location.protocol === 'file:') {
+    $('#intro')?.remove();
+    app.innerHTML = `
+      <div class="form-wrap card center">
+        <div class="eyebrow">Falta un paso</div>
+        <h2>Así no se abre la página</h2>
+        <p class="muted">Abriste el archivo <strong>index.html</strong> directamente, por eso no puedes ingresar.</p>
+        <p>Cierra esta pestaña, vuelve a la carpeta principal de la página y dale doble clic a
+          <strong>INICIAR.bat</strong> (Windows) o <strong>iniciar.command</strong> (Mac).
+          La página se abrirá sola en <strong>http://localhost:3000</strong>.</p>
+      </div>`;
+    return;
+  }
   try {
     const { user } = await api('/api/me');
     state.user = user;

@@ -19,6 +19,17 @@ Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, con
   - Ranking por mes, con la comisión de cada vendedor.
   - Cambio de contraseña.
 
+## Cómo abrirla (la forma fácil)
+
+1. Instala **Node.js** desde <https://nodejs.org> (botón verde **LTS**). Solo se hace una vez.
+2. Dale **doble clic** a:
+   - **`INICIAR.bat`** en Windows.
+   - **`iniciar.command`** en Mac (la primera vez: clic derecho → **Abrir**).
+3. Se abre una ventana negra y la página aparece sola en el navegador, en <http://localhost:3000>.
+4. **No cierres la ventana negra** mientras uses la página; al cerrarla, la página se apaga.
+
+> No abras `public/index.html` con doble clic: así la página se ve, pero no puedes ingresar.
+
 ## Requisitos
 
 - **Node.js 22.13 o superior**. No hace falta instalar dependencias: el proyecto usa solo módulos integrados de Node, entre ellos la base de datos SQLite (`node:sqlite`).

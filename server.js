@@ -596,6 +596,41 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+function openBrowser(url) {
+  const { spawn } = require('node:child_process');
+  const [cmd, args] =
+    process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+      : process.platform === 'darwin' ? ['open', [url]]
+        : ['xdg-open', [url]];
+  try {
+    spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+  } catch { /* sin navegador disponible */ }
+}
+
+const SITE_URL = `http://localhost:${PORT}`;
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log('');
+    console.log('  La pagina ya esta encendida en otra ventana.');
+    console.log(`  Abrela en el navegador: ${SITE_URL}`);
+    console.log('');
+    if (process.env.OPEN_BROWSER) openBrowser(SITE_URL);
+    process.exitCode = 0;
+    return;
+  }
+  throw err;
+});
+
 server.listen(PORT, () => {
-  console.log(`Distinto SCZ listo en http://localhost:${PORT}`);
+  console.log('');
+  console.log('  ============================================');
+  console.log('   DISTINTO SCZ esta encendida');
+  console.log(`   Abre en tu navegador: ${SITE_URL}`);
+  console.log('');
+  console.log('   NO cierres esta ventana mientras uses la pagina.');
+  console.log('   Para apagarla, cierra esta ventana.');
+  console.log('  ============================================');
+  console.log('');
+  if (process.env.OPEN_BROWSER) openBrowser(SITE_URL);
 });
