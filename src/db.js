@@ -130,6 +130,10 @@ addCol('stock_taken', 'INTEGER NOT NULL DEFAULT 0'); // 1 = las unidades ya se d
 if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'stock')) {
   db.exec('ALTER TABLE perfumes ADD COLUMN stock INTEGER');
 }
+// "Más vendidos": perfumes que el administrador destaca en el inicio.
+if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'bestseller')) {
+  db.exec('ALTER TABLE perfumes ADD COLUMN bestseller INTEGER NOT NULL DEFAULT 0');
+}
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_token ON orders(track_token)');
 
 db.exec(`
@@ -138,6 +142,21 @@ db.exec(`
     value TEXT
   );
 `);
+
+// Primera vez: marcar como "más vendidos" Mandarin, 9 PM clásico y Hawas Ice si ya están en el catálogo.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'bestsellers_seeded'").get()) {
+  const picks = db.prepare('SELECT id, name, brand FROM perfumes').all().filter(({ name, brand }) => {
+    const t = `${brand || ''} ${name}`.toLowerCase();
+    return /mandarin/.test(t) || /hawas\s*ice/.test(t) ||
+      (/\b9\s*pm\b/.test(t) && !/rebel|elixir|night|femme|intense|black|neon|for her/.test(t));
+  });
+  if (picks.length) {
+    const mark = db.prepare('UPDATE perfumes SET bestseller = 1 WHERE id = ?');
+    picks.forEach((p) => mark.run(p.id));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('bestsellers_seeded', '1')").run();
+    console.log(`Más vendidos: ${picks.map((p) => p.name).join(', ')}`);
+  }
+}
 
 // Create the administrator account on first start.
 const adminEmail = (process.env.ADMIN_EMAIL || 'admin@perfumeria.com').toLowerCase();

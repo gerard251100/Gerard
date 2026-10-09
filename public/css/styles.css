@@ -807,3 +807,24 @@ body.soon-mode .wa-float { bottom: 22px; }
 .chip, .chip:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25); }
 .chip.active { box-shadow: inset 0 1px 0 #fff, inset 0 -2px 6px rgba(0, 0, 0, 0.12); }
 .toolbar input[type="search"] { border-radius: 999px; padding-left: 1.2rem; }
+
+/* ---- Los más vendidos ---- */
+.best-badge {
+  position: absolute; right: 0.6rem; top: 0.6rem; padding: 0.3rem 0.7rem; border-radius: 999px;
+  font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 600;
+  color: #000; background: linear-gradient(180deg, #fff, #dcdcdc);
+  box-shadow: inset 0 1px 0 #fff, 0 4px 14px rgba(255, 255, 255, 0.18);
+}
+.bestsellers .best-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.bestsellers .product { position: relative; }
+.bestsellers .product::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.08), transparent 60%);
+}
+.best-toggle { display: block; margin-top: 0.35rem; padding: 0; background: none; border: none; color: var(--muted); font: inherit; font-size: 0.72rem; cursor: pointer; }
+.best-toggle.on { color: var(--fg); }
+.best-toggle:hover { color: var(--fg); text-decoration: underline; }
+@media (max-width: 720px) {
+  .bestsellers .best-grid { grid-template-columns: 1fr 1fr; }
+  .best-badge { right: 0.4rem; top: 0.4rem; font-size: 0.55rem; padding: 0.25rem 0.5rem; }
+}

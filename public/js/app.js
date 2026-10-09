@@ -367,6 +367,13 @@ async function viewHome() {
       </div>
     </section>
     <div class="marquee" aria-hidden="true"><div class="marquee-track">${marqueeItems}<span class="dot">◇</span>${marqueeItems}<span class="dot">◇</span></div></div>
+    <section class="section bestsellers" id="bestsellers" hidden>
+      <div class="section-head">
+        <div><div class="eyebrow">Top ventas</div><h2>Los más vendidos</h2></div>
+        <a class="btn sm" href="#/catalogo">Ver catálogo</a>
+      </div>
+      <div id="bestGrid"></div>
+    </section>
     <div class="features">
       <div class="feature"><div class="num">01</div><h3>Elige</h3><p class="muted small">Explora el catálogo y agrega tus perfumes favoritos al carrito.</p></div>
       <div class="feature"><div class="num">02</div><h3>Pide</h3><p class="muted small">Deja tu nombre y celular. No necesitas crear una cuenta.</p></div>
@@ -388,6 +395,11 @@ async function viewHome() {
   typeWriter($('#typed'), 'Tu fragancia, tu sello');
   startCountdown();
   const { perfumes } = await api('/api/catalog');
+  const best = perfumes.filter((p) => p.bestseller);
+  if (best.length) {
+    $('#bestsellers').hidden = false;
+    $('#bestGrid').innerHTML = `<div class="grid best-grid">${best.map((p) => productCard(p, { mode })).join('')}</div>`;
+  }
   $('#featured').innerHTML = perfumes.length
     ? `<div class="grid carousel">${perfumes.slice(0, 8).map((p) => productCard(p, { mode })).join('')}</div>`
     : '<div class="empty">Pronto publicaremos nuestro catálogo.</div>';
@@ -427,7 +439,7 @@ function productCard(p, { mode = 'view' } = {}) {
           </div>`;
   return `
     <article class="product ${soldOut ? 'sold-out' : ''}" data-id="${p.id}">
-      <div class="product-img">${productImage(p)}${soldOut ? '<span class="stock-badge out">Agotado</span>' : ''}</div>
+      <div class="product-img">${productImage(p)}${soldOut ? '<span class="stock-badge out">Agotado</span>' : ''}${p.bestseller ? `<span class="best-badge">★ Más vendido</span>` : ''}</div>
       <div class="product-body">
         <div class="product-brand">${esc(p.brand || 'Perfume')}</div>
         <div class="product-name">${esc(p.name)}</div>
@@ -1303,7 +1315,8 @@ async function adminPerfumes(body) {
           ${perfumes.map((p) => `
             <tr>
               <td class="cell-thumb">${p.image ? `<img class="thumb" src="${esc(p.image)}" alt="">` : '<div class="thumb"></div>'}</td>
-              <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}</div></td>
+              <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}</div>
+                <button type="button" class="best-toggle ${p.bestseller ? 'on' : ''}" data-best="${p.id}" title="Mostrar en «Los más vendidos» del inicio">${p.bestseller ? '★ Más vendido' : '☆ Marcar como más vendido'}</button></td>
               <td class="muted" data-label="Categoría">${esc(p.category || '—')}</td>
               <td class="num" data-label="Precio">${money(p.suggested_price)}</td>
               <td class="num" data-label="Comisión" style="color:var(--gold)">${money(p.commission)}</td>
@@ -1318,6 +1331,12 @@ async function adminPerfumes(body) {
       </table></div>`
       : '<div class="empty">Aún no hay perfumes. Agrega el primero para armar tu catálogo.</div>'}`;
   $('#newPerfume').addEventListener('click', () => perfumeForm());
+  $$('[data-best]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, async () => {
+    const on = !b.classList.contains('on');
+    await api(`/api/admin/perfumes/${b.dataset.best}/bestseller`, { method: 'PATCH', body: { bestseller: on } });
+    toast(on ? 'Agregado a «Los más vendidos»' : 'Quitado de «Los más vendidos»');
+    adminPerfumes(body);
+  })));
   // Botones − / + del inventario y edición directa del número.
   $$('[data-stock-id]', body).forEach((box) => {
     const id = box.dataset.stockId;
@@ -1377,6 +1396,7 @@ function perfumeForm(p = {}) {
           <img class="img-preview" id="p-preview" ${p.image ? `src="${esc(p.image)}"` : 'hidden'} alt="Vista previa">
         </div>
         <label class="checkbox field full"><input type="checkbox" name="active" ${p.active === 0 ? '' : 'checked'}> Publicado (visible en el catálogo)</label>
+        <label class="checkbox field full"><input type="checkbox" name="bestseller" ${p.bestseller ? 'checked' : ''}> ★ Mostrar en «Los más vendidos» del inicio</label>
       </div>
       <div class="btn-row">
         <button class="btn solid" type="submit">${editing ? 'Guardar cambios' : 'Agregar perfume'}</button>
@@ -1405,6 +1425,7 @@ function perfumeForm(p = {}) {
     e.preventDefault();
     const data = formData(e.target);
     data.active = e.target.active.checked;
+    data.bestseller = e.target.bestseller.checked;
     withBusy(e.submitter, async () => {
       await api(editing ? `/api/admin/perfumes/${p.id}` : '/api/admin/perfumes', { method: editing ? 'PUT' : 'POST', body: data });
       closeModal();

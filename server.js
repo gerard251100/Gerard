@@ -264,7 +264,7 @@ route('POST', '/api/me/password', async (ctx) => {
 // ---- Catálogo
 
 // El stock exacto solo lo ve el administrador; al público solo se le dice si está agotado.
-const PUBLIC_FIELDS = 'id, name, brand, category, size_ml, description, image, (stock IS NOT NULL AND stock <= 0) AS sold_out';
+const PUBLIC_FIELDS = 'id, name, brand, category, size_ml, description, image, bestseller, (stock IS NOT NULL AND stock <= 0) AS sold_out';
 
 route('GET', '/api/catalog', async () => ({
   perfumes: db
@@ -906,6 +906,7 @@ function perfumeFields(b) {
     money(b.commission),
     b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
     stockValue(b.stock),
+    b.bestseller === true || b.bestseller === 1 || b.bestseller === '1' || b.bestseller === 'on' ? 1 : 0,
   ];
 }
 
@@ -926,8 +927,8 @@ route('POST', '/api/admin/perfumes', async (ctx) => {
   requireAdmin(ctx);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, bestseller)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(...perfumeFields(ctx.body));
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(lastInsertRowid) };
@@ -939,7 +940,7 @@ route('PUT', '/api/admin/perfumes/:id', async (ctx) => {
   const { changes } = db
     .prepare(
       `UPDATE perfumes SET name = ?, brand = ?, category = ?, size_ml = ?, description = ?, image = ?,
-              suggested_price = ?, commission = ?, active = ?, stock = ? WHERE id = ?`
+              suggested_price = ?, commission = ?, active = ?, stock = ?, bestseller = ? WHERE id = ?`
     )
     .run(...perfumeFields(ctx.body), id);
   if (!changes) throw new HttpError(404, 'Perfume no encontrado');
@@ -961,6 +962,14 @@ route('PATCH', '/api/admin/perfumes/:id/stock', async (ctx) => {
     stock = stockValue(ctx.body.stock);
   }
   db.prepare('UPDATE perfumes SET stock = ? WHERE id = ?').run(stock, id);
+  return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
+});
+
+route('PATCH', '/api/admin/perfumes/:id/bestseller', async (ctx) => {
+  requireAdmin(ctx);
+  const id = Number(ctx.params.id);
+  const { changes } = db.prepare('UPDATE perfumes SET bestseller = ? WHERE id = ?').run(ctx.body.bestseller ? 1 : 0, id);
+  if (!changes) throw new HttpError(404, 'Perfume no encontrado');
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
 });
 
