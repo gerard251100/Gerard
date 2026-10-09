@@ -701,3 +701,17 @@ body.soon-mode { padding-bottom: 0; }
 .stock-ctl.out input { background: var(--fg); color: var(--bg); }
 .stock-alert { border-color: var(--fg); margin-bottom: 1.2rem; }
 .stock-alert .order-items li { align-items: center; }
+
+/* ---- Catálogo por marca ---- */
+.brand-bar { display: flex; align-items: center; gap: 0.8rem; margin: -0.4rem 0 1.4rem; }
+.brand-bar-label { font-size: 0.68rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); flex: 0 0 auto; }
+.brand-bar .chips { min-width: 0; }
+.chip-count { opacity: 0.55; margin-left: 0.2rem; }
+.brand-section + .brand-section { margin-top: 2.4rem; }
+.brand-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding-bottom: 0.6rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line-soft); }
+.brand-head h3 { margin: 0; font-family: var(--serif); font-size: 1.6rem; letter-spacing: 0.08em; text-transform: uppercase; }
+@media (max-width: 720px) {
+  .brand-bar { flex-direction: column; align-items: stretch; gap: 0.5rem; margin-top: 0; }
+  .brand-head h3 { font-size: 1.25rem; }
+  .brand-section + .brand-section { margin-top: 1.8rem; }
+}

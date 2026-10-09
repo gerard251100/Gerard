@@ -475,33 +475,66 @@ app.addEventListener('click', (e) => {
   toast(`Agregado al carrito (${qty})`);
 });
 
+const brandOf = (p) => (p.brand || '').trim() || 'Otras marcas';
+
+// Buscador + filtros por categoría y por marca.
 function catalogFilters(perfumes, onChange) {
   const categories = [...new Set(perfumes.map((p) => p.category).filter(Boolean))];
+  const counts = {};
+  perfumes.forEach((p) => { counts[brandOf(p)] = (counts[brandOf(p)] || 0) + 1; });
+  const brands = Object.keys(counts).sort((a, b) => a.localeCompare(b, 'es'));
   const html = `
     <div class="toolbar">
       <input type="search" id="q" placeholder="Buscar por nombre o marca…">
-      <div class="chips">
-        <button class="chip active" data-cat="">Todos</button>
-        ${categories.map((c) => `<button class="chip" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}
+      <div class="chips" data-group="cat">
+        <button class="chip active" data-val="">Todos</button>
+        ${categories.map((c) => `<button class="chip" data-val="${esc(c)}">${esc(c)}</button>`).join('')}
       </div>
-    </div>`;
+    </div>
+    ${brands.length > 1 ? `
+      <div class="brand-bar">
+        <span class="brand-bar-label">Marcas</span>
+        <div class="chips" data-group="brand">
+          <button class="chip active" data-val="">Todas</button>
+          ${brands.map((b) => `<button class="chip" data-val="${esc(b)}">${esc(b)} <span class="chip-count">${counts[b]}</span></button>`).join('')}
+        </div>
+      </div>` : ''}`;
   const bind = (root) => {
-    let cat = '';
+    const sel = { cat: '', brand: '' };
     const apply = () => {
       const q = $('#q', root).value.trim().toLowerCase();
-      onChange(perfumes.filter((p) =>
-        (!cat || p.category === cat) &&
-        (!q || `${p.name} ${p.brand} ${p.description}`.toLowerCase().includes(q))));
+      const list = perfumes.filter((p) =>
+        (!sel.cat || p.category === sel.cat) &&
+        (!sel.brand || brandOf(p) === sel.brand) &&
+        (!q || `${p.name} ${p.brand} ${p.description}`.toLowerCase().includes(q)));
+      // Sin marca elegida ni búsqueda: el catálogo se muestra separado por marca.
+      onChange(list, { grouped: !sel.brand && !q && brands.length > 1 });
     };
     $('#q', root).addEventListener('input', apply);
-    $$('.chip', root).forEach((chip) => chip.addEventListener('click', () => {
-      $$('.chip', root).forEach((c) => c.classList.remove('active'));
-      chip.classList.add('active');
-      cat = chip.dataset.cat;
-      apply();
-    }));
+    $$('[data-group]', root).forEach((group) => {
+      $$('.chip', group).forEach((chip) => chip.addEventListener('click', () => {
+        $$('.chip', group).forEach((c) => c.classList.remove('active'));
+        chip.classList.add('active');
+        sel[group.dataset.group] = chip.dataset.val;
+        apply();
+      }));
+    });
+    apply();
   };
   return { html, bind };
+}
+
+// Cuadrícula de perfumes; agrupada por marca cuando corresponde.
+function productGrid(list, mode, { grouped } = {}) {
+  if (!list.length) return '<div class="empty">No hay perfumes que coincidan con la búsqueda.</div>';
+  if (!grouped) return `<div class="grid">${list.map((p) => productCard(p, { mode })).join('')}</div>`;
+  const byBrand = {};
+  list.forEach((p) => (byBrand[brandOf(p)] ||= []).push(p));
+  return Object.keys(byBrand).sort((a, b) => a.localeCompare(b, 'es')).map((b) => `
+    <section class="brand-section">
+      <div class="brand-head"><h3>${esc(b)}</h3><span class="muted small">${byBrand[b].length} ${byBrand[b].length === 1 ? 'perfume' : 'perfumes'}</span></div>
+      <div class="grid">${byBrand[b].map((p) => productCard(p, { mode })).join('')}</div>
+    </section>`).join('');
 }
 
 async function viewCatalog() {
@@ -512,18 +545,13 @@ async function viewCatalog() {
     root.innerHTML = '<div class="empty">Aún no hay perfumes en el catálogo.</div>';
     return;
   }
-  const draw = (list) => {
-    $('#catalogGrid').innerHTML = list.length
-      ? `<div class="grid">${list.map((p) => productCard(p, { mode })).join('')}</div>`
-      : '<div class="empty">No hay perfumes que coincidan con la búsqueda.</div>';
-  };
+  const draw = (list, opts) => { $('#catalogGrid').innerHTML = productGrid(list, mode, opts); };
   const mode = cardMode();
   const filters = catalogFilters(perfumes, draw);
   root.innerHTML = `${filters.html}<div id="catalogGrid"></div>
     ${mode === 'shop' ? '<div class="center" style="margin-top:2rem"><a class="btn solid" href="#/carrito">Ir al carrito</a></div>'
       : '<p class="center muted small" style="margin-top:2rem">Eres vendedor: arma los pedidos de tus clientes desde <a href="#/panel" style="text-decoration:underline">Mi panel</a>.</p>'}`;
   filters.bind(root);
-  draw(perfumes);
 }
 
 /* ---- Ciudades y forma de entrega ---- */
@@ -726,15 +754,10 @@ async function vendorCatalog(body) {
     body.innerHTML = '<div class="empty">El administrador aún no ha publicado perfumes.</div>';
     return;
   }
-  const draw = (list) => {
-    $('#vGrid').innerHTML = list.length
-      ? `<div class="grid">${list.map((p) => productCard(p, { mode: 'vendor' })).join('')}</div>`
-      : '<div class="empty">No hay perfumes que coincidan con la búsqueda.</div>';
-  };
+  const draw = (list, opts) => { $('#vGrid').innerHTML = productGrid(list, 'vendor', opts); };
   const filters = catalogFilters(perfumes, draw);
   body.innerHTML = `${filters.html}<div id="vGrid"></div>`;
   filters.bind(body);
-  draw(perfumes);
 }
 
 // Carrito compartido por clientes y vendedores.
