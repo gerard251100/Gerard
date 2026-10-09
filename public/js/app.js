@@ -413,7 +413,7 @@ function cardMode() {
 }
 
 function productCard(p, { mode = 'view' } = {}) {
-  const soldOut = p.stock != null && p.stock <= 0;
+  const soldOut = Boolean(p.sold_out);
   const addBlock = (label) => soldOut
     ? '<div class="product-actions"><button class="btn sm" disabled>Agotado</button></div>'
     : `
@@ -426,8 +426,8 @@ function productCard(p, { mode = 'view' } = {}) {
             <button class="btn sm solid" data-add="${p.id}">${label}</button>
           </div>`;
   return `
-    <article class="product ${soldOut ? 'sold-out' : ''}" data-id="${p.id}" data-stock="${p.stock ?? ''}">
-      <div class="product-img">${productImage(p)}${stockBadge(p.stock)}</div>
+    <article class="product ${soldOut ? 'sold-out' : ''}" data-id="${p.id}">
+      <div class="product-img">${productImage(p)}${soldOut ? '<span class="stock-badge out">Agotado</span>' : ''}</div>
       <div class="product-body">
         <div class="product-brand">${esc(p.brand || 'Perfume')}</div>
         <div class="product-name">${esc(p.name)}</div>
@@ -454,14 +454,19 @@ app.addEventListener('click', (e) => {
     input.value = Math.max(1, Math.min(999, (Number(input.value) || 1) + Number(btn.dataset.qty)));
     return;
   }
-  let qty = Math.max(1, Math.min(999, Math.floor(Number(input.value)) || 1));
-  if (card.dataset.stock !== '') {
-    // No dejar agregar más unidades de las que hay en inventario.
-    const left = Number(card.dataset.stock) - (cart.read()[btn.dataset.add] || 0);
-    if (left <= 0) { toast('Ya tienes en el carrito todas las unidades disponibles'); return; }
-    if (qty > left) { qty = left; toast(left === 1 ? 'Solo queda 1 unidad disponible' : `Solo quedan ${left} unidades disponibles`); }
-  }
-  cart.add(btn.dataset.add, qty);
+  const qty = Math.max(1, Math.min(999, Math.floor(Number(input.value)) || 1));
+  const id = btn.dataset.add;
+  // Se consulta al servidor si alcanza el stock (el número exacto solo lo ve el administrador).
+  btn.disabled = true;
+  hasStock(id, (cart.read()[id] || 0) + qty).then((ok) => {
+    btn.disabled = false;
+    if (!ok) return;
+    addToCart(btn, card, input, id, qty);
+  });
+});
+
+function addToCart(btn, card, input, id, qty) {
+  cart.add(id, qty);
   // Pequeña animación en el ícono del carrito y en el botón.
   for (const el of [$('[data-cart-icon]'), btn]) {
     if (!el) continue;
@@ -473,7 +478,18 @@ app.addEventListener('click', (e) => {
   const tab = state.user?.role === 'vendor' && $$('.tab')[1];
   if (tab) tab.textContent = `Carrito (${cart.count()})`;
   toast(`Agregado al carrito (${qty})`);
-});
+}
+
+async function hasStock(id, quantity) {
+  try {
+    const { ok, message } = await api('/api/catalog/check', { method: 'POST', body: { perfume_id: Number(id), quantity } });
+    if (!ok) toast(message, true);
+    return ok;
+  } catch (err) {
+    toast(err.message, true);
+    return false;
+  }
+}
 
 const brandOf = (p) => (p.brand || '').trim() || 'Otras marcas';
 
@@ -771,13 +787,6 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
     // Quitar del carrito los perfumes que ya no están activos.
     const stale = Object.keys(items).filter((id) => !byId[id]);
     if (stale.length) { stale.forEach((id) => delete items[id]); cart.write(items); }
-    // Ajustar al inventario disponible.
-    let trimmed = false;
-    for (const [id, qty] of Object.entries(items)) {
-      const stock = byId[id].stock;
-      if (stock != null && qty > stock) { trimmed = true; if (stock > 0) items[id] = stock; else delete items[id]; }
-    }
-    if (trimmed) { cart.write(items); toast('Ajustamos tu carrito a las unidades disponibles'); }
     const lines = Object.entries(items).map(([id, qty]) => ({ p: byId[id], qty }));
     const total = lines.reduce((sum, l) => sum + price(l.p) * l.qty, 0);
     const totalCommission = commission ? lines.reduce((sum, l) => sum + commission(l.p) * l.qty, 0) : 0;
@@ -801,7 +810,7 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
               </div>
               <div class="qty">
                 <button type="button" data-step="-1" aria-label="Menos">−</button>
-                <input type="number" min="1" max="${p.stock ?? 999}" value="${qty}" aria-label="Cantidad">
+                <input type="number" min="1" max="999" value="${qty}" aria-label="Cantidad">
                 <button type="button" data-step="1" aria-label="Más">+</button>
               </div>
               <button class="btn sm ghost danger" data-remove aria-label="Quitar">×</button>
@@ -821,14 +830,20 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
     if (saved) $$('input, select, textarea', form).forEach((el, i) => { if (el.type === 'radio') el.checked = saved[i]; else if (saved[i] !== undefined) el.value = saved[i]; });
     syncDelivery(form);
 
+    // Al subir la cantidad se confirma que haya existencias.
+    const setQty = async (id, next) => {
+      if (next > (cart.read()[id] || 0) && !(await hasStock(id, next))) { draw(); return; }
+      cart.set(id, next);
+      draw();
+    };
     $$('.cart-line', body).forEach((line) => {
       const id = line.dataset.id;
       const input = $('input', line);
       $$('[data-step]', line).forEach((b) => b.addEventListener('click', () => {
-        cart.set(id, Math.max(1, Math.min(byId[id].stock ?? 999, (Number(input.value) || 1) + Number(b.dataset.step))));
-        draw();
+        const next = Math.max(1, Math.min(999, (Number(input.value) || 1) + Number(b.dataset.step)));
+        setQty(id, next);
       }));
-      input.addEventListener('change', () => { cart.set(id, Math.max(1, Math.min(byId[id].stock ?? 999, Math.floor(Number(input.value)) || 1))); draw(); });
+      input.addEventListener('change', () => setQty(id, Math.max(1, Math.min(999, Math.floor(Number(input.value)) || 1))));
       $('[data-remove]', line).addEventListener('click', () => { cart.set(id, 0); draw(); });
     });
     $('#clearCart').addEventListener('click', () => {
@@ -1205,7 +1220,7 @@ function adminSummary(body, s) {
       <div class="card stock-alert">
         <h3 style="margin-top:0">⚠ Stock bajo</h3>
         <ul class="order-items">
-          ${s.lowStock.map((p) => `<li><span>${esc([p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · '))}</span>${stockBadge(p.stock)}</li>`).join('')}
+          ${s.lowStock.map((p) => `<li><span>${esc([p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · '))}</span><span class="stock-badge ${p.stock <= 0 ? 'out' : ''}">${p.stock <= 0 ? 'Agotado' : `Quedan ${p.stock}`}</span></li>`).join('')}
         </ul>
         <button class="btn sm" data-go="catalogo">Reponer stock</button>
       </div>` : ''}
@@ -1322,13 +1337,6 @@ async function adminPerfumes(body) {
       viewAdmin('catalogo');
     });
   }));
-}
-
-function stockBadge(stock) {
-  if (stock == null) return '';
-  if (stock <= 0) return '<span class="stock-badge out">Agotado</span>';
-  if (stock <= 3) return `<span class="stock-badge low">${stock === 1 ? '¡Última unidad!' : `Últimas ${stock}`}</span>`;
-  return '';
 }
 
 function stockControl(p) {

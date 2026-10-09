@@ -263,13 +263,25 @@ route('POST', '/api/me/password', async (ctx) => {
 
 // ---- Catálogo
 
-const PUBLIC_FIELDS = 'id, name, brand, category, size_ml, description, image, stock';
+// El stock exacto solo lo ve el administrador; al público solo se le dice si está agotado.
+const PUBLIC_FIELDS = 'id, name, brand, category, size_ml, description, image, (stock IS NOT NULL AND stock <= 0) AS sold_out';
 
 route('GET', '/api/catalog', async () => ({
   perfumes: db
     .prepare(`SELECT ${PUBLIC_FIELDS}, suggested_price AS price FROM perfumes WHERE active = 1 ORDER BY brand, name`)
     .all(),
 }));
+
+// ¿Hay unidades suficientes para esta cantidad? (sin revelar cuántas quedan)
+route('POST', '/api/catalog/check', async (ctx) => {
+  const id = Number(ctx.body.perfume_id);
+  const qty = Math.floor(Number(ctx.body.quantity));
+  const p = db.prepare('SELECT name, stock FROM perfumes WHERE id = ? AND active = 1').get(id);
+  if (!p) return { ok: false, message: 'Este perfume ya no está disponible' };
+  if (!Number.isFinite(qty) || qty < 1) return { ok: false, message: 'Cantidad inválida' };
+  if (p.stock != null && p.stock < qty) return { ok: false, message: noStock(p.name) };
+  return { ok: true };
+});
 
 route('GET', '/api/vendor/perfumes', async (ctx) => {
   requireMember(ctx);
@@ -297,7 +309,7 @@ function loadOrder(id) {
 
 // ---- Inventario
 // Al crear un pedido se descuentan las unidades; si se cancela (o se elimina sin entregar) vuelven al stock.
-const unitsLeft = (n, name) => (n === 1 ? `Solo queda 1 unidad de ${name}` : `Solo quedan ${n} unidades de ${name}`);
+const noStock = (name) => `Ya no quedan existencias de ${name}`;
 
 function takeStock(orderId) {
   const items = db.prepare('SELECT perfume_id, perfume_name, SUM(quantity) AS qty FROM order_items WHERE order_id = ? GROUP BY perfume_id').all(orderId);
@@ -307,9 +319,7 @@ function takeStock(orderId) {
     const row = it.perfume_id && getStock.get(it.perfume_id);
     if (!row || row.stock == null) continue;
     if (row.stock < it.qty) {
-      throw new HttpError(409, row.stock > 0
-        ? unitsLeft(row.stock, it.perfume_name)
-        : `${it.perfume_name} está agotado`);
+      throw new HttpError(409, noStock(it.perfume_name));
     }
     take.run(it.qty, it.perfume_id);
   }
@@ -369,7 +379,7 @@ function createOrder(b, vendor) {
     const p = getPerfume.get(Number(it.perfume_id));
     if (!p) throw new HttpError(400, 'Uno de los perfumes ya no está disponible');
     if (p.stock != null && p.stock < qty) {
-      throw new HttpError(409, p.stock > 0 ? unitsLeft(p.stock, p.name) : `${p.name} está agotado`);
+      throw new HttpError(409, noStock(p.name));
     }
     return { p, qty, commission: vendor ? p.commission : 0 };
   });
