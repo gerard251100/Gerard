@@ -659,7 +659,7 @@ route('PATCH', '/api/orders/:id/payment', async (ctx) => {
 // ---- Ajustes de la tienda (QR de pago, WhatsApp)
 
 const SETTING_KEYS = ['payment_qr', 'whatsapp', 'coming_soon'];
-const DEFAULT_SETTINGS = { payment_qr: '/img/qr-yape.jpg', whatsapp: '', coming_soon: '' };
+const DEFAULT_SETTINGS = { payment_qr: '/img/qr-yape.jpg', whatsapp: '59163626511', coming_soon: '' };
 
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };

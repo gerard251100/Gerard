@@ -1798,6 +1798,8 @@ $('#year').textContent = new Date().getFullYear();
     const [{ user }] = await Promise.all([api('/api/me'), getSettings()]);
     state.user = user;
   } catch { /* sin sesión */ }
+  // El botón flotante usa el número de WhatsApp configurado en Pagos y cuenta.
+  if (settingsCache?.whatsapp) $('#waFloat').href = waLink(settingsCache.whatsapp, 'Hola Distinto SCZ, quiero información sobre sus perfumes.');
   router();
 })();
 
