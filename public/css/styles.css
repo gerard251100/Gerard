@@ -687,3 +687,17 @@ body.soon-mode { padding-bottom: 0; }
 .delivery-extra[hidden], .city-other[hidden] { display: none; }
 .city-other { margin-top: 0.5rem; }
 .delivery-line { font-size: 0.88rem; }
+
+/* ---- Inventario ---- */
+.product-img { position: relative; }
+.stock-badge { display: inline-block; padding: 0.25rem 0.55rem; font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; border: 1px solid var(--fg); background: var(--bg); color: var(--fg); white-space: nowrap; }
+.stock-badge.out { background: var(--fg); color: var(--bg); }
+.product-img .stock-badge { position: absolute; top: 0.6rem; left: 0.6rem; }
+.product.sold-out .product-img img { filter: grayscale(1) brightness(0.45); }
+.stock-ctl { display: inline-flex; align-items: center; gap: 0.25rem; }
+.stock-ctl input { width: 4.2rem; padding: 0.35rem 0.3rem; text-align: center; }
+.stock-ctl .btn { padding: 0.3rem 0.6rem; }
+.stock-ctl.low input { border-color: var(--fg); }
+.stock-ctl.out input { background: var(--fg); color: var(--bg); }
+.stock-alert { border-color: var(--fg); margin-bottom: 1.2rem; }
+.stock-alert .order-items li { align-items: center; }

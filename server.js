@@ -263,7 +263,7 @@ route('POST', '/api/me/password', async (ctx) => {
 
 // ---- Catálogo
 
-const PUBLIC_FIELDS = 'id, name, brand, category, size_ml, description, image';
+const PUBLIC_FIELDS = 'id, name, brand, category, size_ml, description, image, stock';
 
 route('GET', '/api/catalog', async () => ({
   perfumes: db
@@ -293,6 +293,36 @@ function loadOrder(id) {
   order.items = db.prepare('SELECT * FROM order_items WHERE order_id = ? ORDER BY id').all(id);
   order.history = db.prepare('SELECT * FROM order_history WHERE order_id = ? ORDER BY id').all(id);
   return order;
+}
+
+// ---- Inventario
+// Al crear un pedido se descuentan las unidades; si se cancela (o se elimina sin entregar) vuelven al stock.
+const unitsLeft = (n, name) => (n === 1 ? `Solo queda 1 unidad de ${name}` : `Solo quedan ${n} unidades de ${name}`);
+
+function takeStock(orderId) {
+  const items = db.prepare('SELECT perfume_id, perfume_name, SUM(quantity) AS qty FROM order_items WHERE order_id = ? GROUP BY perfume_id').all(orderId);
+  const getStock = db.prepare('SELECT stock FROM perfumes WHERE id = ?');
+  const take = db.prepare('UPDATE perfumes SET stock = stock - ? WHERE id = ? AND stock IS NOT NULL');
+  for (const it of items) {
+    const row = it.perfume_id && getStock.get(it.perfume_id);
+    if (!row || row.stock == null) continue;
+    if (row.stock < it.qty) {
+      throw new HttpError(409, row.stock > 0
+        ? unitsLeft(row.stock, it.perfume_name)
+        : `${it.perfume_name} está agotado`);
+    }
+    take.run(it.qty, it.perfume_id);
+  }
+  db.prepare('UPDATE orders SET stock_taken = 1 WHERE id = ?').run(orderId);
+}
+
+function returnStock(orderId) {
+  const order = db.prepare('SELECT stock_taken FROM orders WHERE id = ?').get(orderId);
+  if (!order || !order.stock_taken) return;
+  const items = db.prepare('SELECT perfume_id, SUM(quantity) AS qty FROM order_items WHERE order_id = ? GROUP BY perfume_id').all(orderId);
+  const give = db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL');
+  for (const it of items) if (it.perfume_id) give.run(it.qty, it.perfume_id);
+  db.prepare('UPDATE orders SET stock_taken = 0 WHERE id = ?').run(orderId);
 }
 
 // Forma de entrega: recojo en tienda, envío a domicilio (Santa Cruz) o envío a otra ciudad.
@@ -338,6 +368,9 @@ function createOrder(b, vendor) {
     if (!Number.isFinite(qty) || qty < 1 || qty > 999) throw new HttpError(400, 'Cantidad inválida');
     const p = getPerfume.get(Number(it.perfume_id));
     if (!p) throw new HttpError(400, 'Uno de los perfumes ya no está disponible');
+    if (p.stock != null && p.stock < qty) {
+      throw new HttpError(409, p.stock > 0 ? unitsLeft(p.stock, p.name) : `${p.name} está agotado`);
+    }
     return { p, qty, commission: vendor ? p.commission : 0 };
   });
 
@@ -377,6 +410,7 @@ function createOrder(b, vendor) {
       const label = [p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · ');
       insertItem.run(lastInsertRowid, p.id, label, qty, p.suggested_price, commission);
     }
+    takeStock(lastInsertRowid);
     db.prepare(`INSERT INTO order_history (order_id, status, note) VALUES (?, 'pendiente', 'Pedido creado')`).run(
       lastInsertRowid
     );
@@ -571,8 +605,13 @@ function deleteOrders(ids) {
   const proofs = clean.map((id) => getProof.get(id)?.payment_proof).filter(Boolean);
   const deleted = transaction(() => {
     const del = db.prepare('DELETE FROM orders WHERE id = ?');
+    const getStatus = db.prepare('SELECT status FROM orders WHERE id = ?');
     let n = 0;
-    for (const id of clean) n += Number(del.run(id).changes);
+    for (const id of clean) {
+      // Un pedido eliminado sin entregar (por ejemplo, de prueba) devuelve sus unidades al inventario.
+      if (getStatus.get(id)?.status !== 'entregado') returnStock(id);
+      n += Number(del.run(id).changes);
+    }
     // Si ya no queda ningún pedido, la numeración vuelve a empezar en #1.
     if (!db.prepare('SELECT 1 FROM orders LIMIT 1').get()) {
       db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('orders', 'order_items', 'order_history')").run();
@@ -699,9 +738,12 @@ route('PATCH', '/api/orders/:id/status', async (ctx) => {
   const id = Number(ctx.params.id);
   const status = text(ctx.body.status, 20);
   if (!ORDER_STATUSES.includes(status)) throw new HttpError(400, 'Estado inválido');
-  if (!db.prepare('SELECT id FROM orders WHERE id = ?').get(id)) throw new HttpError(404, 'Pedido no encontrado');
+  const current = db.prepare('SELECT status FROM orders WHERE id = ?').get(id);
+  if (!current) throw new HttpError(404, 'Pedido no encontrado');
   const note = text(ctx.body.note, 500);
   transaction(() => {
+    if (status === 'cancelado' && current.status !== 'cancelado') returnStock(id);
+    if (status !== 'cancelado' && current.status === 'cancelado') takeStock(id);
     db.prepare(`UPDATE orders SET status = ?, admin_note = ?, updated_at = datetime('now') WHERE id = ?`).run(
       status,
       note || null,
@@ -720,6 +762,7 @@ route('POST', '/api/orders/:id/cancel', async (ctx) => {
   if (!order) throw new HttpError(404, 'Pedido no encontrado');
   if (order.status !== 'pendiente') throw new HttpError(400, 'Solo puedes cancelar pedidos pendientes');
   transaction(() => {
+    returnStock(id);
     db.prepare(`UPDATE orders SET status = 'cancelado', updated_at = datetime('now') WHERE id = ?`).run(id);
     db.prepare(`INSERT INTO order_history (order_id, status, note) VALUES (?, 'cancelado', 'Cancelado por el vendedor')`).run(id);
   });
@@ -788,6 +831,7 @@ route('GET', '/api/admin/summary', async (ctx) => {
     pendingVendors: one(`SELECT COUNT(*) FROM users WHERE role = 'vendor' AND status = 'pending'`),
     approvedVendors: one(`SELECT COUNT(*) FROM users WHERE role = 'vendor' AND status = 'approved'`),
     activePerfumes: one('SELECT COUNT(*) FROM perfumes WHERE active = 1'),
+    lowStock: db.prepare('SELECT id, brand, name, size_ml, stock FROM perfumes WHERE active = 1 AND stock IS NOT NULL AND stock <= 3 ORDER BY stock, name').all(),
     openOrders: one(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('entregado', 'cancelado')`),
     openCustomerOrders: one(`SELECT COUNT(*) FROM orders WHERE source = 'cliente' AND status NOT IN ('entregado', 'cancelado')`),
     unpaidCustomerOrders: one(
@@ -851,7 +895,16 @@ function perfumeFields(b) {
     money(b.suggested_price),
     money(b.commission),
     b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
+    stockValue(b.stock),
   ];
+}
+
+// Unidades en inventario: vacío = sin control de stock.
+function stockValue(value) {
+  if (value === '' || value == null) return null;
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < 0 || n > 100000) throw new HttpError(400, 'El stock debe ser un número de 0 en adelante');
+  return n;
 }
 
 route('GET', '/api/admin/perfumes', async (ctx) => {
@@ -863,8 +916,8 @@ route('POST', '/api/admin/perfumes', async (ctx) => {
   requireAdmin(ctx);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(...perfumeFields(ctx.body));
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(lastInsertRowid) };
@@ -876,10 +929,28 @@ route('PUT', '/api/admin/perfumes/:id', async (ctx) => {
   const { changes } = db
     .prepare(
       `UPDATE perfumes SET name = ?, brand = ?, category = ?, size_ml = ?, description = ?, image = ?,
-              suggested_price = ?, commission = ?, active = ? WHERE id = ?`
+              suggested_price = ?, commission = ?, active = ?, stock = ? WHERE id = ?`
     )
     .run(...perfumeFields(ctx.body), id);
   if (!changes) throw new HttpError(404, 'Perfume no encontrado');
+  return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
+});
+
+// Ajuste rápido del inventario: { stock } fija la cantidad, { add } suma o resta unidades.
+route('PATCH', '/api/admin/perfumes/:id/stock', async (ctx) => {
+  requireAdmin(ctx);
+  const id = Number(ctx.params.id);
+  const p = db.prepare('SELECT stock FROM perfumes WHERE id = ?').get(id);
+  if (!p) throw new HttpError(404, 'Perfume no encontrado');
+  let stock;
+  if ('add' in ctx.body) {
+    const add = Math.trunc(Number(ctx.body.add));
+    if (!Number.isFinite(add)) throw new HttpError(400, 'Cantidad inválida');
+    stock = Math.max(0, (p.stock || 0) + add);
+  } else {
+    stock = stockValue(ctx.body.stock);
+  }
+  db.prepare('UPDATE perfumes SET stock = ? WHERE id = ?').run(stock, id);
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
 });
 

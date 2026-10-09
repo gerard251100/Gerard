@@ -125,6 +125,11 @@ addCol('delivery_city', 'TEXT');
 addCol('recipient_name', 'TEXT');
 addCol('recipient_ci', 'TEXT');
 addCol('recipient_phone', 'TEXT');
+addCol('stock_taken', 'INTEGER NOT NULL DEFAULT 0'); // 1 = las unidades ya se descontaron del inventario
+// Inventario: unidades disponibles (vacío = sin control de stock).
+if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'stock')) {
+  db.exec('ALTER TABLE perfumes ADD COLUMN stock INTEGER');
+}
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_token ON orders(track_token)');
 
 db.exec(`

@@ -413,7 +413,10 @@ function cardMode() {
 }
 
 function productCard(p, { mode = 'view' } = {}) {
-  const addBlock = (label) => `
+  const soldOut = p.stock != null && p.stock <= 0;
+  const addBlock = (label) => soldOut
+    ? '<div class="product-actions"><button class="btn sm" disabled>Agotado</button></div>'
+    : `
           <div class="product-actions">
             <div class="qty">
               <button type="button" data-qty="-1" aria-label="Menos">−</button>
@@ -423,8 +426,8 @@ function productCard(p, { mode = 'view' } = {}) {
             <button class="btn sm solid" data-add="${p.id}">${label}</button>
           </div>`;
   return `
-    <article class="product" data-id="${p.id}">
-      <div class="product-img">${productImage(p)}</div>
+    <article class="product ${soldOut ? 'sold-out' : ''}" data-id="${p.id}" data-stock="${p.stock ?? ''}">
+      <div class="product-img">${productImage(p)}${stockBadge(p.stock)}</div>
       <div class="product-body">
         <div class="product-brand">${esc(p.brand || 'Perfume')}</div>
         <div class="product-name">${esc(p.name)}</div>
@@ -451,7 +454,13 @@ app.addEventListener('click', (e) => {
     input.value = Math.max(1, Math.min(999, (Number(input.value) || 1) + Number(btn.dataset.qty)));
     return;
   }
-  const qty = Math.max(1, Math.min(999, Math.floor(Number(input.value)) || 1));
+  let qty = Math.max(1, Math.min(999, Math.floor(Number(input.value)) || 1));
+  if (card.dataset.stock !== '') {
+    // No dejar agregar más unidades de las que hay en inventario.
+    const left = Number(card.dataset.stock) - (cart.read()[btn.dataset.add] || 0);
+    if (left <= 0) { toast('Ya tienes en el carrito todas las unidades disponibles'); return; }
+    if (qty > left) { qty = left; toast(left === 1 ? 'Solo queda 1 unidad disponible' : `Solo quedan ${left} unidades disponibles`); }
+  }
   cart.add(btn.dataset.add, qty);
   // Pequeña animación en el ícono del carrito y en el botón.
   for (const el of [$('[data-cart-icon]'), btn]) {
@@ -739,6 +748,13 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
     // Quitar del carrito los perfumes que ya no están activos.
     const stale = Object.keys(items).filter((id) => !byId[id]);
     if (stale.length) { stale.forEach((id) => delete items[id]); cart.write(items); }
+    // Ajustar al inventario disponible.
+    let trimmed = false;
+    for (const [id, qty] of Object.entries(items)) {
+      const stock = byId[id].stock;
+      if (stock != null && qty > stock) { trimmed = true; if (stock > 0) items[id] = stock; else delete items[id]; }
+    }
+    if (trimmed) { cart.write(items); toast('Ajustamos tu carrito a las unidades disponibles'); }
     const lines = Object.entries(items).map(([id, qty]) => ({ p: byId[id], qty }));
     const total = lines.reduce((sum, l) => sum + price(l.p) * l.qty, 0);
     const totalCommission = commission ? lines.reduce((sum, l) => sum + commission(l.p) * l.qty, 0) : 0;
@@ -762,7 +778,7 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
               </div>
               <div class="qty">
                 <button type="button" data-step="-1" aria-label="Menos">−</button>
-                <input type="number" min="1" max="999" value="${qty}" aria-label="Cantidad">
+                <input type="number" min="1" max="${p.stock ?? 999}" value="${qty}" aria-label="Cantidad">
                 <button type="button" data-step="1" aria-label="Más">+</button>
               </div>
               <button class="btn sm ghost danger" data-remove aria-label="Quitar">×</button>
@@ -786,10 +802,10 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
       const id = line.dataset.id;
       const input = $('input', line);
       $$('[data-step]', line).forEach((b) => b.addEventListener('click', () => {
-        cart.set(id, Math.max(1, (Number(input.value) || 1) + Number(b.dataset.step)));
+        cart.set(id, Math.max(1, Math.min(byId[id].stock ?? 999, (Number(input.value) || 1) + Number(b.dataset.step))));
         draw();
       }));
-      input.addEventListener('change', () => { cart.set(id, Math.max(1, Math.floor(Number(input.value)) || 1)); draw(); });
+      input.addEventListener('change', () => { cart.set(id, Math.max(1, Math.min(byId[id].stock ?? 999, Math.floor(Number(input.value)) || 1))); draw(); });
       $('[data-remove]', line).addEventListener('click', () => { cart.set(id, 0); draw(); });
     });
     $('#clearCart').addEventListener('click', () => {
@@ -1162,6 +1178,14 @@ function adminSummary(body, s) {
       <div class="stat"><div class="lbl">Pagos por confirmar</div><div class="val">${s.unpaidCustomerOrders}</div></div>
       <div class="stat"><div class="lbl">Ventas entregadas · mes</div><div class="val">${money(s.monthSales)}</div></div>
     </div>
+    ${s.lowStock?.length ? `
+      <div class="card stock-alert">
+        <h3 style="margin-top:0">⚠ Stock bajo</h3>
+        <ul class="order-items">
+          ${s.lowStock.map((p) => `<li><span>${esc([p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · '))}</span>${stockBadge(p.stock)}</li>`).join('')}
+        </ul>
+        <button class="btn sm" data-go="catalogo">Reponer stock</button>
+      </div>` : ''}
     <div class="btn-row">
       <button class="btn" data-go="solicitudes">Revisar solicitudes</button>
       <button class="btn" data-go="catalogo">Agregar perfume</button>
@@ -1236,7 +1260,7 @@ async function adminPerfumes(body) {
     </div>
     ${perfumes.length ? `
       <div class="table-wrap"><table class="stack">
-        <thead><tr><th></th><th>Perfume</th><th>Categoría</th><th class="num">Precio</th><th class="num">Comisión</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
+        <thead><tr><th></th><th>Perfume</th><th>Categoría</th><th class="num">Precio</th><th class="num">Comisión</th><th class="num">Stock</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
         <tbody>
           ${perfumes.map((p) => `
             <tr>
@@ -1245,6 +1269,7 @@ async function adminPerfumes(body) {
               <td class="muted" data-label="Categoría">${esc(p.category || '—')}</td>
               <td class="num" data-label="Precio">${money(p.suggested_price)}</td>
               <td class="num" data-label="Comisión" style="color:var(--gold)">${money(p.commission)}</td>
+              <td class="num" data-label="Stock">${stockControl(p)}</td>
               <td data-label="Estado">${p.active ? '<span class="badge approved">Publicado</span>' : '<span class="badge">Oculto</span>'}</td>
               <td class="num cell-actions"><div class="btn-row" style="justify-content:flex-end">
                 <button class="btn sm" data-edit="${p.id}">Editar</button>
@@ -1255,6 +1280,16 @@ async function adminPerfumes(body) {
       </table></div>`
       : '<div class="empty">Aún no hay perfumes. Agrega el primero para armar tu catálogo.</div>'}`;
   $('#newPerfume').addEventListener('click', () => perfumeForm());
+  // Botones − / + del inventario y edición directa del número.
+  $$('[data-stock-id]', body).forEach((box) => {
+    const id = box.dataset.stockId;
+    const save = (payload, btn) => withBusy(btn, async () => {
+      await api(`/api/admin/perfumes/${id}/stock`, { method: 'PATCH', body: payload });
+      adminPerfumes(body);
+    });
+    $$('[data-stock-add]', box).forEach((b) => b.addEventListener('click', () => save({ add: Number(b.dataset.stockAdd) }, b)));
+    $('input', box).addEventListener('change', (e) => save({ stock: e.target.value }, null));
+  });
   $$('[data-edit]', body).forEach((b) => b.addEventListener('click', () => perfumeForm(perfumes.find((p) => p.id === Number(b.dataset.edit)))));
   $$('[data-del]', body).forEach((b) => b.addEventListener('click', () => {
     if (!confirm('¿Eliminar este perfume del catálogo? Los pedidos existentes se conservan.')) return;
@@ -1264,6 +1299,23 @@ async function adminPerfumes(body) {
       viewAdmin('catalogo');
     });
   }));
+}
+
+function stockBadge(stock) {
+  if (stock == null) return '';
+  if (stock <= 0) return '<span class="stock-badge out">Agotado</span>';
+  if (stock <= 3) return `<span class="stock-badge low">${stock === 1 ? '¡Última unidad!' : `Últimas ${stock}`}</span>`;
+  return '';
+}
+
+function stockControl(p) {
+  const state = p.stock == null ? '' : p.stock <= 0 ? 'out' : p.stock <= 3 ? 'low' : '';
+  return `
+    <div class="stock-ctl ${state}" data-stock-id="${p.id}">
+      <button type="button" class="btn sm ghost" data-stock-add="-1" aria-label="Restar una unidad" ${p.stock == null || p.stock <= 0 ? 'disabled' : ''}>−</button>
+      <input type="number" min="0" value="${p.stock ?? ''}" placeholder="∞" aria-label="Unidades en stock" title="Vacío = sin control de stock">
+      <button type="button" class="btn sm ghost" data-stock-add="1" aria-label="Sumar una unidad">+</button>
+    </div>`;
 }
 
 function perfumeForm(p = {}) {
@@ -1284,6 +1336,8 @@ function perfumeForm(p = {}) {
         <div class="field"><label for="p-size">Tamaño (ml)</label><input id="p-size" name="size_ml" type="number" min="1" value="${esc(p.size_ml || '')}"></div>
         <div class="field"><label for="p-price">Precio de venta (Bs) *</label><input id="p-price" name="suggested_price" type="number" min="0" step="0.01" required value="${esc(p.suggested_price ?? '')}"></div>
         <div class="field"><label for="p-comm">Comisión del vendedor (Bs) *</label><input id="p-comm" name="commission" type="number" min="0" step="0.01" required value="${esc(p.commission ?? '')}"></div>
+        <div class="field"><label for="p-stock">Unidades en stock</label><input id="p-stock" name="stock" type="number" min="0" step="1" value="${esc(p.stock ?? '')}" placeholder="Ej: 10">
+          <span class="small muted">Baja sola con cada pedido. Déjalo vacío si no quieres controlar el stock.</span></div>
         <div class="field full"><label for="p-desc">Descripción / notas olfativas</label><textarea id="p-desc" name="description">${esc(p.description || '')}</textarea></div>
         <div class="field full">
           <label for="p-img">Imagen (URL o sube un archivo)</label>
