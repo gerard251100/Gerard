@@ -1916,7 +1916,8 @@ async function adminAccount(body) {
    Efectos dinámicos
    ================================================================= */
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const REVEAL_SELECTOR = '.product, .feature, .stat, .order, .section-head, .podium-place, .table-wrap, .card, .cta, .empty, .cart-line';
+// Las tablas no se animan: con muchas filas son más altas que la pantalla.
+const REVEAL_SELECTOR = '.product, .feature, .stat, .order, .section-head, .podium-place, .card, .cta, .empty, .cart-line';
 
 const revealObserver = 'IntersectionObserver' in window
   ? new IntersectionObserver((entries) => {
@@ -1927,7 +1928,7 @@ const revealObserver = 'IntersectionObserver' in window
       const val = entry.target.matches('.stat') && $('.val', entry.target);
       if (val) countUp(val);
     }
-  }, { threshold: 0.08, rootMargin: '0px 0px -30px 0px' })
+  }, { threshold: 0, rootMargin: '0px 0px -30px 0px' })
   : null;
 
 function prepareReveal(root) {
