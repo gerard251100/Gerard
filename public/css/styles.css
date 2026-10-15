@@ -843,3 +843,16 @@ body.soon-mode .wa-float { bottom: 22px; }
   .report-form .btn { width: 100%; }
   .stock-table .inv-input { width: 8.5rem; }
 }
+
+/* ---- Ventas fuera de la página ---- */
+.sale-card { display: grid; gap: 1.2rem; margin-bottom: 1.5rem; }
+.sale-form { display: grid; grid-template-columns: 2fr 0.7fr 1fr 1fr; gap: 0.8rem; align-items: end; }
+.sale-form .field { margin: 0; }
+.sale-form .sale-note { grid-column: 1 / 4; }
+.sale-form input[type="date"] { color-scheme: dark; }
+.sale-history summary { cursor: pointer; color: var(--muted); }
+.sale-history .order-items li { align-items: center; }
+@media (max-width: 720px) {
+  .sale-form { grid-template-columns: 1fr 1fr; }
+  .sale-form .sale-perfume, .sale-form .sale-note, .sale-form .btn { grid-column: 1 / -1; }
+}

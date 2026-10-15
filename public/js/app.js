@@ -35,6 +35,9 @@ function money(n) {
   return `${Number(n) < 0 ? '−' : ''}${CURRENCY}${int.replace(/\B(?=(\d{3})+(?!\d))/g, '.')},${dec}`;
 }
 
+// "2026-10-15" -> "15/10/2026"
+const fmtDay = (d) => String(d || '').split('-').reverse().join('/');
+
 function fmtDate(sqlDate) {
   if (!sqlDate) return '';
   const d = new Date(sqlDate.replace(' ', 'T') + 'Z');
@@ -1373,16 +1376,17 @@ function stockControl(p) {
 
 /* ---- Stock: inventario con precio de compra y reportes en Excel ---- */
 async function adminStock(body) {
-  const { perfumes } = await api('/api/admin/inventory');
+  const { perfumes, sales } = await api('/api/admin/inventory');
   const today = new Date();
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const monthStart = iso(new Date(today.getFullYear(), today.getMonth(), 1));
-  const num = (v) => (v == null ? null : Number(v));
+  const myPrice = (p) => p.store_price ?? p.suggested_price;
+  const byId = Object.fromEntries(perfumes.map((p) => [p.id, p]));
   const totals = perfumes.reduce((t, p) => {
     if (p.stock != null) {
       t.units += p.stock;
-      t.sale += p.stock * p.suggested_price;
-      if (p.cost != null) { t.cost += p.stock * p.cost; t.profit += p.stock * (p.suggested_price - p.cost - p.commission); }
+      t.sale += p.stock * myPrice(p);
+      if (p.cost != null) { t.cost += p.stock * p.cost; t.profit += p.stock * (myPrice(p) - p.cost); }
     }
     if (p.cost == null) t.noCost++;
     return t;
@@ -1393,7 +1397,7 @@ async function adminStock(body) {
       <div>
         <div class="eyebrow" style="margin:0">Reporte en Excel</div>
         <h3 style="margin:0.3rem 0">Ventas, costos y ganancias por fecha</h3>
-        <p class="small muted" style="margin:0">Incluye resumen, ventas por perfume, detalle de cada venta e inventario actual. No cuenta los pedidos cancelados.</p>
+        <p class="small muted" style="margin:0">Incluye ventas de la página y ventas fuera de la página: resumen, ventas por perfume, detalle de cada venta e inventario actual. No cuenta los pedidos cancelados.</p>
       </div>
       <form class="report-form" id="reportForm">
         <div class="field"><label for="rp-from">Desde</label><input type="date" id="rp-from" name="from" value="${monthStart}" required></div>
@@ -1408,10 +1412,39 @@ async function adminStock(body) {
       </form>
     </div>
 
+    <div class="card sale-card">
+      <div>
+        <div class="eyebrow" style="margin:0">Venta fuera de la página</div>
+        <h3 style="margin:0.3rem 0">Registrar una venta</h3>
+        <p class="small muted" style="margin:0">Para lo que vendes en persona, por WhatsApp, etc. Baja tu stock y entra en el reporte. No cambia el precio de la página ni las comisiones.</p>
+      </div>
+      ${perfumes.length ? `
+      <form class="sale-form" id="saleForm">
+        <div class="field sale-perfume"><label for="ms-perfume">Perfume</label>
+          <select id="ms-perfume" name="perfume_id" required>
+            <option value="">Elige un perfume…</option>
+            ${perfumes.map((p) => `<option value="${p.id}">${esc([p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · '))}${p.stock != null ? ` (stock: ${p.stock})` : ''}</option>`).join('')}
+          </select></div>
+        <div class="field"><label for="ms-qty">Cantidad</label><input id="ms-qty" name="quantity" type="number" min="1" step="1" value="1" required></div>
+        <div class="field"><label for="ms-price">Precio c/u (Bs)</label><input id="ms-price" name="unit_price" type="number" min="0" step="0.01" required></div>
+        <div class="field"><label for="ms-date">Fecha</label><input id="ms-date" name="sold_at" type="date" value="${iso(today)}" required></div>
+        <div class="field sale-note"><label for="ms-note">Nota (opcional)</label><input id="ms-note" name="note" maxlength="200" placeholder="Ej: cliente, en tienda, feria…"></div>
+        <button class="btn solid" type="submit">Registrar venta</button>
+      </form>` : ''}
+      ${sales.length ? `
+        <details class="sale-history">
+          <summary class="small">Últimas ventas fuera de la página (${sales.length})</summary>
+          <ul class="order-items">
+            ${sales.map((m) => `<li><span>${fmtDay(m.sold_at)} · ${m.quantity} × ${esc(m.perfume_name)} · ${money(m.unit_price)} c/u${m.note ? ` · <span class="muted">${esc(m.note)}</span>` : ''}</span>
+              <button type="button" class="btn sm ghost danger" data-del-sale="${m.id}" aria-label="Borrar venta">×</button></li>`).join('')}
+          </ul>
+        </details>` : ''}
+    </div>
+
     <div class="stats">
       <div class="stat"><div class="lbl">Unidades en stock</div><div class="val">${totals.units}</div></div>
       <div class="stat"><div class="lbl">Invertido en stock (compra)</div><div class="val">${money(totals.cost)}</div></div>
-      <div class="stat"><div class="lbl">Valor a precio de venta</div><div class="val">${money(totals.sale)}</div></div>
+      <div class="stat"><div class="lbl">Valor a mi precio de venta</div><div class="val">${money(totals.sale)}</div></div>
       <div class="stat"><div class="lbl">Ganancia si vendes todo</div><div class="val">${money(totals.profit)}</div></div>
     </div>
     ${totals.noCost ? `<p class="small muted">⚠ ${totals.noCost} ${totals.noCost === 1 ? 'perfume no tiene' : 'perfumes no tienen'} precio de compra. Complétalo para calcular bien las ganancias.</p>` : ''}
@@ -1419,21 +1452,21 @@ async function adminStock(body) {
     <div class="section-head" style="margin-top:1.5rem"><h2>Inventario</h2><input type="search" id="stockSearch" placeholder="Buscar perfume…" style="max-width:260px"></div>
     ${perfumes.length ? `
       <div class="table-wrap"><table class="stack stock-table">
-        <thead><tr><th>Perfume</th><th class="num">Stock</th><th class="num">Precio compra</th><th class="num">Precio venta</th><th class="num">Comisión</th><th class="num">Ganancia c/u</th><th class="num">Vendidos</th></tr></thead>
+        <thead><tr><th>Perfume</th><th class="num">Stock</th><th class="num">Precio compra</th><th class="num">Mi precio venta</th><th class="num">Ganancia c/u</th><th class="num">Precio en la página</th><th class="num">Vendidos</th></tr></thead>
         <tbody>
           ${perfumes.map((p) => `
             <tr data-row="${p.id}" data-search="${esc(`${p.brand || ''} ${p.name}`.toLowerCase())}">
               <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}${p.active ? '' : ' · Oculto'}</div></td>
               <td class="num" data-label="Stock"><input class="inv-input" type="number" min="0" step="1" data-field="stock" value="${p.stock ?? ''}" placeholder="∞"></td>
               <td class="num" data-label="Precio compra"><input class="inv-input" type="number" min="0" step="0.01" data-field="cost" value="${p.cost ?? ''}" placeholder="—"></td>
-              <td class="num" data-label="Precio venta"><input class="inv-input" type="number" min="0" step="0.01" data-field="suggested_price" value="${p.suggested_price}"></td>
-              <td class="num" data-label="Comisión"><input class="inv-input" type="number" min="0" step="0.01" data-field="commission" value="${p.commission}"></td>
-              <td class="num" data-label="Ganancia c/u" data-profit>${profitCell(num(p.cost), p.suggested_price, p.commission)}</td>
-              <td class="num muted" data-label="Vendidos">${p.sold}</td>
+              <td class="num" data-label="Mi precio venta"><input class="inv-input" type="number" min="0" step="0.01" data-field="store_price" value="${p.store_price ?? ''}" placeholder="${p.suggested_price}"></td>
+              <td class="num" data-label="Ganancia c/u" data-profit>${profitCell(p.cost, myPrice(p))}</td>
+              <td class="num muted" data-label="Precio en la página">${money(p.suggested_price)}</td>
+              <td class="num muted" data-label="Vendidos" title="En la página · fuera de la página">${p.sold_web} · ${p.sold_outside}</td>
             </tr>`).join('')}
         </tbody>
       </table></div>
-      <p class="small muted">Los cambios se guardan solos al salir de cada casilla. La ganancia por unidad es: precio de venta − precio de compra − comisión.</p>`
+      <p class="small muted">Los cambios se guardan solos al salir de cada casilla. <strong>Mi precio venta</strong> es tu precio propio: no cambia el precio de la página ni las comisiones de los vendedores (si lo dejas vacío se usa el de la página). Ganancia c/u = mi precio de venta − precio de compra. "Vendidos" = en la página · fuera de la página.</p>`
       : '<div class="empty">Aún no hay perfumes. Agrégalos en la pestaña Catálogo.</div>'}`;
 
   // Guardar cada casilla al cambiarla.
@@ -1441,7 +1474,7 @@ async function adminStock(body) {
     const row = input.closest('tr');
     try {
       const { perfume } = await api(`/api/admin/perfumes/${row.dataset.row}/inventory`, { method: 'PATCH', body: { [input.dataset.field]: input.value } });
-      $('[data-profit]', row).innerHTML = profitCell(perfume.cost, perfume.suggested_price, perfume.commission);
+      $('[data-profit]', row).innerHTML = profitCell(perfume.cost, perfume.store_price ?? perfume.suggested_price);
       input.classList.add('saved');
       setTimeout(() => input.classList.remove('saved'), 900);
     } catch (err) {
@@ -1452,6 +1485,31 @@ async function adminStock(body) {
     const q = e.target.value.trim().toLowerCase();
     $$('[data-row]', body).forEach((tr) => { tr.hidden = q && !tr.dataset.search.includes(q); });
   });
+
+  // Venta fuera de la página: el precio se completa con tu precio de venta.
+  const saleForm = $('#saleForm', body);
+  if (saleForm) {
+    saleForm.perfume_id.addEventListener('change', () => {
+      const p = byId[saleForm.perfume_id.value];
+      saleForm.unit_price.value = p ? myPrice(p) : '';
+    });
+    saleForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      withBusy(e.submitter, async () => {
+        await api('/api/admin/manual-sales', { method: 'POST', body: formData(saleForm) });
+        toast('Venta registrada');
+        adminStock(body);
+      });
+    });
+  }
+  $$('[data-del-sale]', body).forEach((b) => b.addEventListener('click', () => {
+    if (!confirm('¿Borrar esta venta? Las unidades vuelven a tu stock.')) return;
+    withBusy(b, async () => {
+      await api(`/api/admin/manual-sales/${b.dataset.delSale}`, { method: 'DELETE' });
+      toast('Venta borrada');
+      adminStock(body);
+    });
+  }));
 
   // Rangos rápidos de fechas.
   const form = $('#reportForm', body);
@@ -1484,9 +1542,9 @@ async function adminStock(body) {
   });
 }
 
-function profitCell(cost, price, commission) {
+function profitCell(cost, price) {
   if (cost == null) return '<span class="muted">—</span>';
-  const profit = price - cost - commission;
+  const profit = price - cost;
   return `<strong class="${profit < 0 ? 'neg' : ''}">${money(profit)}</strong>`;
 }
 

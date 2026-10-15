@@ -141,6 +141,26 @@ if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'cos
 if (!db.prepare('PRAGMA table_info(order_items)').all().some((c) => c.name === 'unit_cost')) {
   db.exec('ALTER TABLE order_items ADD COLUMN unit_cost REAL');
 }
+// Precio de venta propio del administrador (pestaña Stock), independiente del precio del catálogo.
+if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'store_price')) {
+  db.exec('ALTER TABLE perfumes ADD COLUMN store_price REAL');
+}
+// Ventas hechas fuera de la página (en tienda, por WhatsApp, etc.): bajan el stock, no usan comisiones.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS manual_sales (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    perfume_id   INTEGER REFERENCES perfumes(id) ON DELETE SET NULL,
+    perfume_name TEXT NOT NULL,
+    brand        TEXT,
+    quantity     INTEGER NOT NULL,
+    unit_price   REAL NOT NULL,
+    unit_cost    REAL,
+    sold_at      TEXT NOT NULL,
+    note         TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_manual_sales_date ON manual_sales(sold_at);
+`);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_token ON orders(track_token)');
 
 db.exec(`

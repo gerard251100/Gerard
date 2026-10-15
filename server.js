@@ -985,29 +985,67 @@ route('PATCH', '/api/admin/perfumes/:id/bestseller', async (ctx) => {
 route('GET', '/api/admin/inventory', async (ctx) => {
   requireAdmin(ctx);
   const perfumes = db.prepare(
-    `SELECT p.id, p.name, p.brand, p.size_ml, p.active, p.stock, p.cost, p.suggested_price, p.commission,
+    `SELECT p.id, p.name, p.brand, p.size_ml, p.active, p.stock, p.cost, p.store_price, p.suggested_price,
             COALESCE((SELECT SUM(i.quantity) FROM order_items i JOIN orders o ON o.id = i.order_id
-                      WHERE i.perfume_id = p.id AND o.status != 'cancelado'), 0) AS sold
+                      WHERE i.perfume_id = p.id AND o.status != 'cancelado'), 0) AS sold_web,
+            COALESCE((SELECT SUM(m.quantity) FROM manual_sales m WHERE m.perfume_id = p.id), 0) AS sold_outside
      FROM perfumes p ORDER BY p.brand, p.name`
   ).all();
-  return { perfumes };
+  const sales = db.prepare('SELECT * FROM manual_sales ORDER BY sold_at DESC, id DESC LIMIT 30').all();
+  return { perfumes, sales };
 });
 
+// Solo toca los datos del inventario: el precio del catálogo y las comisiones no cambian.
 route('PATCH', '/api/admin/perfumes/:id/inventory', async (ctx) => {
   requireAdmin(ctx);
   const id = Number(ctx.params.id);
   const p = db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id);
   if (!p) throw new HttpError(404, 'Perfume no encontrado');
   const b = ctx.body;
-  const next = {
-    stock: 'stock' in b ? stockValue(b.stock) : p.stock,
-    cost: 'cost' in b ? costValue(b.cost) : p.cost,
-    price: 'suggested_price' in b ? money(b.suggested_price) : p.suggested_price,
-    commission: 'commission' in b ? money(b.commission) : p.commission,
-  };
-  db.prepare('UPDATE perfumes SET stock = ?, cost = ?, suggested_price = ?, commission = ? WHERE id = ?')
-    .run(next.stock, next.cost, next.price, next.commission, id);
+  db.prepare('UPDATE perfumes SET stock = ?, cost = ?, store_price = ? WHERE id = ?').run(
+    'stock' in b ? stockValue(b.stock) : p.stock,
+    'cost' in b ? costValue(b.cost) : p.cost,
+    'store_price' in b ? costValue(b.store_price) : p.store_price,
+    id
+  );
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
+});
+
+// Venta fuera de la página: baja el stock con el precio que tú pongas.
+route('POST', '/api/admin/manual-sales', async (ctx) => {
+  requireAdmin(ctx);
+  const b = ctx.body;
+  const p = db.prepare('SELECT * FROM perfumes WHERE id = ?').get(Number(b.perfume_id));
+  if (!p) throw new HttpError(400, 'Elige un perfume');
+  const qty = Math.floor(Number(b.quantity));
+  if (!Number.isFinite(qty) || qty < 1 || qty > 9999) throw new HttpError(400, 'Cantidad inválida');
+  if (b.unit_price === '' || b.unit_price == null) throw new HttpError(400, 'Escribe el precio de venta');
+  const price = money(b.unit_price);
+  const soldAt = /^\d{4}-\d{2}-\d{2}$/.test(b.sold_at || '') ? b.sold_at : db.prepare("SELECT date('now', 'localtime') AS d").get().d;
+  const sale = transaction(() => {
+    if (p.stock != null) {
+      if (p.stock < qty) throw new HttpError(409, `Solo tienes ${p.stock} en stock de ${p.name}`);
+      db.prepare('UPDATE perfumes SET stock = stock - ? WHERE id = ?').run(qty, p.id);
+    }
+    const { lastInsertRowid } = db.prepare(
+      `INSERT INTO manual_sales (perfume_id, perfume_name, brand, quantity, unit_price, unit_cost, sold_at, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(p.id, [p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · '), p.brand || '', qty, price, p.cost ?? null, soldAt, text(b.note, 200));
+    return db.prepare('SELECT * FROM manual_sales WHERE id = ?').get(lastInsertRowid);
+  });
+  return { sale };
+});
+
+// Borrar una venta registrada por error: las unidades vuelven al stock.
+route('DELETE', '/api/admin/manual-sales/:id', async (ctx) => {
+  requireAdmin(ctx);
+  const sale = db.prepare('SELECT * FROM manual_sales WHERE id = ?').get(Number(ctx.params.id));
+  if (!sale) throw new HttpError(404, 'Venta no encontrada');
+  transaction(() => {
+    if (sale.perfume_id) db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL').run(sale.quantity, sale.perfume_id);
+    db.prepare('DELETE FROM manual_sales WHERE id = ?').run(sale.id);
+  });
+  return { ok: true };
 });
 
 const STATUS_NAMES = { pendiente: 'Pendiente', confirmado: 'Confirmado', preparando: 'En preparación', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };
@@ -1022,8 +1060,8 @@ route('GET', '/api/admin/report', async (ctx) => {
   if (!isDate(from) || !isDate(to)) throw new HttpError(400, 'Elige la fecha de inicio y de fin');
   if (from > to) throw new HttpError(400, 'La fecha de inicio debe ser antes de la fecha de fin');
 
-  // Ventas del periodo (sin pedidos cancelados). El costo es el registrado al vender o, si no había, el actual.
-  const lines = db.prepare(
+  // Ventas en la página (sin pedidos cancelados). El costo es el registrado al vender o, si no había, el actual.
+  const web = db.prepare(
     `SELECT o.id AS order_id, datetime(o.created_at, 'localtime') AS created, o.client_name, o.source, o.status,
             o.payment_status, o.delivery_method, o.delivery_city, u.name AS vendor_name,
             i.perfume_name, i.perfume_id, i.quantity, i.unit_price, i.unit_commission,
@@ -1034,27 +1072,42 @@ route('GET', '/api/admin/report', async (ctx) => {
      LEFT JOIN perfumes p ON p.id = i.perfume_id
      WHERE o.status != 'cancelado' AND date(o.created_at, 'localtime') BETWEEN ? AND ?
      ORDER BY o.created_at, o.id, i.id`
-  ).all(from, to);
+  ).all(from, to).map((l) => ({
+    ...l,
+    channel: l.source === 'cliente' ? 'Página (cliente)' : `Página · vendedor ${l.vendor_name || '—'}`,
+    status: STATUS_NAMES[l.status] || l.status,
+    pay: l.payment_status === 'pagado' ? 'Pagado' : 'Pendiente',
+    delivery: [DELIVERY_NAMES[l.delivery_method], l.delivery_method === 'envio' ? l.delivery_city : ''].filter(Boolean).join(' · '),
+  }));
 
+  // Ventas fuera de la página (sin comisión).
+  const outside = db.prepare(
+    `SELECT m.*, COALESCE(m.unit_cost, p.cost) AS unit_cost, COALESCE(m.brand, p.brand) AS brand
+     FROM manual_sales m LEFT JOIN perfumes p ON p.id = m.perfume_id
+     WHERE m.sold_at BETWEEN ? AND ? ORDER BY m.sold_at, m.id`
+  ).all(from, to).map((m) => ({
+    order_id: null, created: `${m.sold_at} `, client_name: m.note || '', channel: 'Fuera de la página',
+    perfume_name: m.perfume_name, perfume_id: m.perfume_id, brand: m.brand, quantity: m.quantity,
+    unit_price: m.unit_price, unit_commission: 0, unit_cost: m.unit_cost, status: 'Vendido', pay: 'Pagado', delivery: '',
+  }));
+
+  const lines = [...web, ...outside].sort((a, b) => a.created.localeCompare(b.created));
   const detail = lines.map((l) => {
     const sale = l.unit_price * l.quantity;
     const cost = l.unit_cost == null ? null : l.unit_cost * l.quantity;
     const commission = l.unit_commission * l.quantity;
     return [
-      l.created.slice(0, 10), l.created.slice(11, 16), l.order_id, l.client_name,
-      l.source === 'cliente' ? 'Tienda (directo)' : `Vendedor: ${l.vendor_name || '—'}`,
+      l.created.slice(0, 10).split('-').reverse().join('/'), l.created.slice(11, 16), l.order_id, l.client_name, l.channel,
       l.perfume_name, l.quantity, l.unit_price, sale, l.unit_cost, cost, commission,
-      cost == null ? null : round2(sale - cost - commission),
-      STATUS_NAMES[l.status] || l.status, l.payment_status === 'pagado' ? 'Pagado' : 'Pendiente',
-      [DELIVERY_NAMES[l.delivery_method], l.delivery_method === 'envio' ? l.delivery_city : ''].filter(Boolean).join(' · '),
+      cost == null ? null : round2(sale - cost - commission), l.status, l.pay, l.delivery,
     ];
   });
 
   const byPerfume = new Map();
   for (const l of lines) {
     const key = l.perfume_id ?? l.perfume_name;
-    const row = byPerfume.get(key) || { name: l.perfume_name, brand: l.brand || '', units: 0, sales: 0, cost: 0, commission: 0, missingCost: false };
-    row.units += l.quantity;
+    const row = byPerfume.get(key) || { name: l.perfume_name, brand: l.brand || '', webUnits: 0, outUnits: 0, sales: 0, cost: 0, commission: 0, missingCost: false };
+    if (l.order_id == null) row.outUnits += l.quantity; else row.webUnits += l.quantity;
     row.sales += l.unit_price * l.quantity;
     row.commission += l.unit_commission * l.quantity;
     if (l.unit_cost == null) row.missingCost = true; else row.cost += l.unit_cost * l.quantity;
@@ -1062,21 +1115,34 @@ route('GET', '/api/admin/report', async (ctx) => {
   }
   const perfumeRows = [...byPerfume.values()].sort((a, b) => b.sales - a.sales).map((r) => {
     const profit = r.sales - r.cost - r.commission;
-    return [r.name, r.brand, r.units, round2(r.sales), r.missingCost ? null : round2(r.cost), round2(r.commission),
-      r.missingCost ? null : round2(profit), r.missingCost || !r.sales ? null : profit / r.sales];
+    return [r.name, r.brand, r.webUnits, r.outUnits, r.webUnits + r.outUnits, round2(r.sales), r.missingCost ? null : round2(r.cost),
+      round2(r.commission), r.missingCost ? null : round2(profit), r.missingCost || !r.sales ? null : profit / r.sales];
   });
 
-  const sum = (i) => round2(detail.reduce((n, d) => n + (Number(d[i]) || 0), 0));
-  const totals = { units: sum(6), sales: sum(8), cost: sum(10), commission: sum(11), profit: sum(12) };
-  const orders = new Set(lines.map((l) => l.order_id)).size;
+  const sumOf = (list, f) => round2(list.reduce((n, l) => n + f(l), 0));
+  const part = (list) => ({
+    units: sumOf(list, (l) => l.quantity),
+    sales: sumOf(list, (l) => l.unit_price * l.quantity),
+    cost: sumOf(list, (l) => (l.unit_cost ?? 0) * l.quantity),
+    commission: sumOf(list, (l) => l.unit_commission * l.quantity),
+  });
+  const w = part(web);
+  const o = part(outside);
+  const t = { units: w.units + o.units, sales: round2(w.sales + o.sales), cost: round2(w.cost + o.cost), commission: w.commission };
+  // La ganancia solo se calcula con las ventas cuyo precio de compra se conoce.
+  const known = lines.filter((l) => l.unit_cost != null);
+  t.profit = sumOf(known, (l) => (l.unit_price - l.unit_cost - l.unit_commission) * l.quantity);
+  t.knownSales = sumOf(known, (l) => l.unit_price * l.quantity);
+  const orders = new Set(web.map((l) => l.order_id)).size;
   const missing = lines.some((l) => l.unit_cost == null);
 
-  const inventory = db.prepare('SELECT name, brand, size_ml, stock, cost, suggested_price, commission, active FROM perfumes ORDER BY brand, name').all()
+  const inventory = db.prepare('SELECT name, brand, size_ml, stock, cost, store_price, suggested_price, active FROM perfumes ORDER BY brand, name').all()
     .map((p) => {
-      const margin = p.cost == null ? null : round2(p.suggested_price - p.cost - p.commission);
-      return [p.name, p.brand || '', p.size_ml || null, p.stock, p.cost, p.suggested_price, p.commission, margin,
+      const price = p.store_price ?? p.suggested_price;
+      return [p.name, p.brand || '', p.size_ml || null, p.stock, p.cost, p.store_price, p.suggested_price,
+        p.cost == null ? null : round2(price - p.cost),
         p.stock != null && p.cost != null ? round2(p.stock * p.cost) : null,
-        p.stock != null ? round2(p.stock * p.suggested_price) : null,
+        p.stock != null ? round2(p.stock * price) : null,
         p.active ? 'Publicado' : 'Oculto'];
     });
 
@@ -1087,15 +1153,18 @@ route('GET', '/api/admin/report', async (ctx) => {
     {
       name: 'Resumen',
       title: ['Distinto SCZ · Reporte de ventas', period, `Generado: ${new Date().toLocaleString('es-BO')}`],
-      columns: [{ header: 'Concepto', width: 38 }, { header: 'Valor', width: 20, type: 'money' }],
+      columns: [{ header: 'Concepto', width: 46 }, { header: 'Valor', width: 20, type: 'money' }],
       rows: [
-        ['Pedidos (sin cancelados)', { v: orders, t: 'int' }],
-        ['Unidades vendidas', { v: totals.units, t: 'int' }],
-        ['Ventas totales', totals.sales],
-        ['Costo de los perfumes vendidos', totals.cost],
-        ['Comisiones de vendedores', totals.commission],
-        ['Ganancia neta (ventas − costo − comisiones)', totals.profit],
-        ['Margen de ganancia', { v: totals.sales ? totals.profit / totals.sales : null, t: 'percent' }],
+        ['Pedidos en la página (sin cancelados)', { v: orders, t: 'int' }],
+        ['Unidades vendidas en la página', { v: w.units, t: 'int' }],
+        ['Unidades vendidas fuera de la página', { v: o.units, t: 'int' }],
+        ['Ventas en la página', w.sales],
+        ['Ventas fuera de la página', o.sales],
+        ['VENTAS TOTALES', t.sales],
+        ['Costo de los perfumes vendidos', t.cost],
+        ['Comisiones de vendedores', t.commission],
+        ['GANANCIA NETA (ventas − costo − comisiones)', t.profit],
+        ['Margen de ganancia', { v: t.knownSales ? t.profit / t.knownSales : null, t: 'percent' }],
         ...(missing ? [['Nota: hay perfumes sin precio de compra; su ganancia no se pudo calcular.', null]] : []),
       ],
     },
@@ -1103,20 +1172,21 @@ route('GET', '/api/admin/report', async (ctx) => {
       name: 'Por perfume',
       title: ['Ventas por perfume', period],
       columns: [
-        { header: 'Perfume', width: 36 }, { header: 'Marca', width: 16 }, { header: 'Unidades', width: 11, type: 'int' },
+        { header: 'Perfume', width: 34 }, { header: 'Marca', width: 16 }, { header: 'Unid. página', width: 12, type: 'int' },
+        { header: 'Unid. fuera', width: 11, type: 'int' }, { header: 'Unid. total', width: 11, type: 'int' },
         { header: 'Ventas', width: 15, type: 'money' }, { header: 'Costo', width: 15, type: 'money' },
         { header: 'Comisiones', width: 14, type: 'money' }, { header: 'Ganancia', width: 15, type: 'money' },
         { header: 'Margen', width: 10, type: 'percent' },
       ],
       rows: perfumeRows,
-      totals: ['TOTAL', '', totals.units, totals.sales, totals.cost, totals.commission, totals.profit, ''],
+      totals: ['TOTAL', '', w.units, o.units, t.units, t.sales, t.cost, t.commission, t.profit, ''],
     },
     {
       name: 'Detalle de ventas',
       title: ['Detalle de ventas', period],
       columns: [
         { header: 'Fecha', width: 12 }, { header: 'Hora', width: 8 }, { header: 'Pedido', width: 9, type: 'int' },
-        { header: 'Cliente', width: 24 }, { header: 'Origen', width: 24 }, { header: 'Perfume', width: 34 },
+        { header: 'Cliente / nota', width: 24 }, { header: 'Canal', width: 28 }, { header: 'Perfume', width: 34 },
         { header: 'Cant.', width: 7, type: 'int' }, { header: 'Precio venta', width: 14, type: 'money' },
         { header: 'Total venta', width: 14, type: 'money' }, { header: 'Precio compra', width: 14, type: 'money' },
         { header: 'Costo total', width: 14, type: 'money' }, { header: 'Comisión', width: 12, type: 'money' },
@@ -1124,7 +1194,7 @@ route('GET', '/api/admin/report', async (ctx) => {
         { header: 'Entrega', width: 26 },
       ],
       rows: detail,
-      totals: ['TOTAL', '', '', '', '', '', totals.units, '', totals.sales, '', totals.cost, totals.commission, totals.profit, '', '', ''],
+      totals: ['TOTAL', '', '', '', '', '', t.units, '', t.sales, '', t.cost, t.commission, t.profit, '', '', ''],
     },
     {
       name: 'Inventario',
@@ -1132,7 +1202,7 @@ route('GET', '/api/admin/report', async (ctx) => {
       columns: [
         { header: 'Perfume', width: 34 }, { header: 'Marca', width: 16 }, { header: 'ml', width: 7, type: 'int' },
         { header: 'Stock', width: 9, type: 'int' }, { header: 'Precio compra', width: 14, type: 'money' },
-        { header: 'Precio venta', width: 14, type: 'money' }, { header: 'Comisión', width: 12, type: 'money' },
+        { header: 'Mi precio de venta', width: 17, type: 'money' }, { header: 'Precio en la página', width: 18, type: 'money' },
         { header: 'Ganancia por unidad', width: 18, type: 'money' }, { header: 'Valor en stock (compra)', width: 22, type: 'money' },
         { header: 'Valor en stock (venta)', width: 21, type: 'money' }, { header: 'Estado', width: 11 },
       ],
