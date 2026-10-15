@@ -134,6 +134,13 @@ if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'sto
 if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'bestseller')) {
   db.exec('ALTER TABLE perfumes ADD COLUMN bestseller INTEGER NOT NULL DEFAULT 0');
 }
+// Precio de compra (costo) del perfume y su valor al momento de cada venta, para calcular ganancias.
+if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'cost')) {
+  db.exec('ALTER TABLE perfumes ADD COLUMN cost REAL');
+}
+if (!db.prepare('PRAGMA table_info(order_items)').all().some((c) => c.name === 'unit_cost')) {
+  db.exec('ALTER TABLE order_items ADD COLUMN unit_cost REAL');
+}
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_token ON orders(track_token)');
 
 db.exec(`

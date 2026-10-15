@@ -828,3 +828,18 @@ body.soon-mode .wa-float { bottom: 22px; }
   .bestsellers .best-grid { grid-template-columns: 1fr 1fr; }
   .best-badge { right: 0.4rem; top: 0.4rem; font-size: 0.55rem; padding: 0.25rem 0.5rem; }
 }
+
+/* ---- Stock y reportes ---- */
+.report-card { display: grid; gap: 1.2rem; margin-bottom: 1.5rem; }
+.report-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.8rem; }
+.report-form .field { flex: 1 1 150px; margin: 0; }
+.report-form .chips { flex: 1 1 100%; }
+.report-form input[type="date"] { color-scheme: dark; }
+.stock-table .inv-input { width: 7rem; padding: 0.45rem 0.6rem; text-align: right; border-radius: 10px; transition: border-color 0.2s, box-shadow 0.3s; }
+.stock-table .inv-input.saved { border-color: var(--ok); box-shadow: 0 0 0 3px rgba(90, 210, 140, 0.25); }
+.stock-table .neg { color: var(--bad); }
+.stock-table tr[hidden] { display: none; }
+@media (max-width: 720px) {
+  .report-form .btn { width: 100%; }
+  .stock-table .inv-input { width: 8.5rem; }
+}

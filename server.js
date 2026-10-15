@@ -413,12 +413,12 @@ function createOrder(b, vendor) {
         delivery.recipientPhone
       );
     const insertItem = db.prepare(
-      `INSERT INTO order_items (order_id, perfume_id, perfume_name, quantity, unit_price, unit_commission)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO order_items (order_id, perfume_id, perfume_name, quantity, unit_price, unit_commission, unit_cost)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
     for (const { p, qty, commission } of items) {
       const label = [p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · ');
-      insertItem.run(lastInsertRowid, p.id, label, qty, p.suggested_price, commission);
+      insertItem.run(lastInsertRowid, p.id, label, qty, p.suggested_price, commission, p.cost ?? null);
     }
     takeStock(lastInsertRowid);
     db.prepare(`INSERT INTO order_history (order_id, status, note) VALUES (?, 'pendiente', 'Pedido creado')`).run(
@@ -906,8 +906,15 @@ function perfumeFields(b) {
     money(b.commission),
     b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
     stockValue(b.stock),
+    costValue(b.cost),
     b.bestseller === true || b.bestseller === 1 || b.bestseller === '1' || b.bestseller === 'on' ? 1 : 0,
   ];
+}
+
+// Precio de compra: vacío = sin registrar.
+function costValue(value) {
+  if (value === '' || value == null) return null;
+  return money(value);
 }
 
 // Unidades en inventario: vacío = sin control de stock.
@@ -927,8 +934,8 @@ route('POST', '/api/admin/perfumes', async (ctx) => {
   requireAdmin(ctx);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, bestseller)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, cost, bestseller)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(...perfumeFields(ctx.body));
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(lastInsertRowid) };
@@ -940,7 +947,7 @@ route('PUT', '/api/admin/perfumes/:id', async (ctx) => {
   const { changes } = db
     .prepare(
       `UPDATE perfumes SET name = ?, brand = ?, category = ?, size_ml = ?, description = ?, image = ?,
-              suggested_price = ?, commission = ?, active = ?, stock = ?, bestseller = ? WHERE id = ?`
+              suggested_price = ?, commission = ?, active = ?, stock = ?, cost = ?, bestseller = ? WHERE id = ?`
     )
     .run(...perfumeFields(ctx.body), id);
   if (!changes) throw new HttpError(404, 'Perfume no encontrado');
@@ -971,6 +978,170 @@ route('PATCH', '/api/admin/perfumes/:id/bestseller', async (ctx) => {
   const { changes } = db.prepare('UPDATE perfumes SET bestseller = ? WHERE id = ?').run(ctx.body.bestseller ? 1 : 0, id);
   if (!changes) throw new HttpError(404, 'Perfume no encontrado');
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
+});
+
+// ---- Stock: inventario con precio de compra y reportes en Excel (solo administrador)
+
+route('GET', '/api/admin/inventory', async (ctx) => {
+  requireAdmin(ctx);
+  const perfumes = db.prepare(
+    `SELECT p.id, p.name, p.brand, p.size_ml, p.active, p.stock, p.cost, p.suggested_price, p.commission,
+            COALESCE((SELECT SUM(i.quantity) FROM order_items i JOIN orders o ON o.id = i.order_id
+                      WHERE i.perfume_id = p.id AND o.status != 'cancelado'), 0) AS sold
+     FROM perfumes p ORDER BY p.brand, p.name`
+  ).all();
+  return { perfumes };
+});
+
+route('PATCH', '/api/admin/perfumes/:id/inventory', async (ctx) => {
+  requireAdmin(ctx);
+  const id = Number(ctx.params.id);
+  const p = db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id);
+  if (!p) throw new HttpError(404, 'Perfume no encontrado');
+  const b = ctx.body;
+  const next = {
+    stock: 'stock' in b ? stockValue(b.stock) : p.stock,
+    cost: 'cost' in b ? costValue(b.cost) : p.cost,
+    price: 'suggested_price' in b ? money(b.suggested_price) : p.suggested_price,
+    commission: 'commission' in b ? money(b.commission) : p.commission,
+  };
+  db.prepare('UPDATE perfumes SET stock = ?, cost = ?, suggested_price = ?, commission = ? WHERE id = ?')
+    .run(next.stock, next.cost, next.price, next.commission, id);
+  return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
+});
+
+const STATUS_NAMES = { pendiente: 'Pendiente', confirmado: 'Confirmado', preparando: 'En preparación', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };
+const DELIVERY_NAMES = { recojo: 'Recojo en tienda', domicilio: 'Envío a domicilio', envio: 'Envío a otra ciudad' };
+const round2 = (n) => Math.round(n * 100) / 100;
+
+route('GET', '/api/admin/report', async (ctx) => {
+  requireAdmin(ctx);
+  const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+  const from = ctx.query.get('from');
+  const to = ctx.query.get('to');
+  if (!isDate(from) || !isDate(to)) throw new HttpError(400, 'Elige la fecha de inicio y de fin');
+  if (from > to) throw new HttpError(400, 'La fecha de inicio debe ser antes de la fecha de fin');
+
+  // Ventas del periodo (sin pedidos cancelados). El costo es el registrado al vender o, si no había, el actual.
+  const lines = db.prepare(
+    `SELECT o.id AS order_id, datetime(o.created_at, 'localtime') AS created, o.client_name, o.source, o.status,
+            o.payment_status, o.delivery_method, o.delivery_city, u.name AS vendor_name,
+            i.perfume_name, i.perfume_id, i.quantity, i.unit_price, i.unit_commission,
+            COALESCE(i.unit_cost, p.cost) AS unit_cost, p.brand
+     FROM order_items i
+     JOIN orders o ON o.id = i.order_id
+     LEFT JOIN users u ON u.id = o.vendor_id
+     LEFT JOIN perfumes p ON p.id = i.perfume_id
+     WHERE o.status != 'cancelado' AND date(o.created_at, 'localtime') BETWEEN ? AND ?
+     ORDER BY o.created_at, o.id, i.id`
+  ).all(from, to);
+
+  const detail = lines.map((l) => {
+    const sale = l.unit_price * l.quantity;
+    const cost = l.unit_cost == null ? null : l.unit_cost * l.quantity;
+    const commission = l.unit_commission * l.quantity;
+    return [
+      l.created.slice(0, 10), l.created.slice(11, 16), l.order_id, l.client_name,
+      l.source === 'cliente' ? 'Tienda (directo)' : `Vendedor: ${l.vendor_name || '—'}`,
+      l.perfume_name, l.quantity, l.unit_price, sale, l.unit_cost, cost, commission,
+      cost == null ? null : round2(sale - cost - commission),
+      STATUS_NAMES[l.status] || l.status, l.payment_status === 'pagado' ? 'Pagado' : 'Pendiente',
+      [DELIVERY_NAMES[l.delivery_method], l.delivery_method === 'envio' ? l.delivery_city : ''].filter(Boolean).join(' · '),
+    ];
+  });
+
+  const byPerfume = new Map();
+  for (const l of lines) {
+    const key = l.perfume_id ?? l.perfume_name;
+    const row = byPerfume.get(key) || { name: l.perfume_name, brand: l.brand || '', units: 0, sales: 0, cost: 0, commission: 0, missingCost: false };
+    row.units += l.quantity;
+    row.sales += l.unit_price * l.quantity;
+    row.commission += l.unit_commission * l.quantity;
+    if (l.unit_cost == null) row.missingCost = true; else row.cost += l.unit_cost * l.quantity;
+    byPerfume.set(key, row);
+  }
+  const perfumeRows = [...byPerfume.values()].sort((a, b) => b.sales - a.sales).map((r) => {
+    const profit = r.sales - r.cost - r.commission;
+    return [r.name, r.brand, r.units, round2(r.sales), r.missingCost ? null : round2(r.cost), round2(r.commission),
+      r.missingCost ? null : round2(profit), r.missingCost || !r.sales ? null : profit / r.sales];
+  });
+
+  const sum = (i) => round2(detail.reduce((n, d) => n + (Number(d[i]) || 0), 0));
+  const totals = { units: sum(6), sales: sum(8), cost: sum(10), commission: sum(11), profit: sum(12) };
+  const orders = new Set(lines.map((l) => l.order_id)).size;
+  const missing = lines.some((l) => l.unit_cost == null);
+
+  const inventory = db.prepare('SELECT name, brand, size_ml, stock, cost, suggested_price, commission, active FROM perfumes ORDER BY brand, name').all()
+    .map((p) => {
+      const margin = p.cost == null ? null : round2(p.suggested_price - p.cost - p.commission);
+      return [p.name, p.brand || '', p.size_ml || null, p.stock, p.cost, p.suggested_price, p.commission, margin,
+        p.stock != null && p.cost != null ? round2(p.stock * p.cost) : null,
+        p.stock != null ? round2(p.stock * p.suggested_price) : null,
+        p.active ? 'Publicado' : 'Oculto'];
+    });
+
+  const fmtDate = (d) => d.split('-').reverse().join('/');
+  const period = `Del ${fmtDate(from)} al ${fmtDate(to)}`;
+  const { buildXlsx } = require('./src/xlsx');
+  const body = buildXlsx([
+    {
+      name: 'Resumen',
+      title: ['Distinto SCZ · Reporte de ventas', period, `Generado: ${new Date().toLocaleString('es-BO')}`],
+      columns: [{ header: 'Concepto', width: 38 }, { header: 'Valor', width: 20, type: 'money' }],
+      rows: [
+        ['Pedidos (sin cancelados)', { v: orders, t: 'int' }],
+        ['Unidades vendidas', { v: totals.units, t: 'int' }],
+        ['Ventas totales', totals.sales],
+        ['Costo de los perfumes vendidos', totals.cost],
+        ['Comisiones de vendedores', totals.commission],
+        ['Ganancia neta (ventas − costo − comisiones)', totals.profit],
+        ['Margen de ganancia', { v: totals.sales ? totals.profit / totals.sales : null, t: 'percent' }],
+        ...(missing ? [['Nota: hay perfumes sin precio de compra; su ganancia no se pudo calcular.', null]] : []),
+      ],
+    },
+    {
+      name: 'Por perfume',
+      title: ['Ventas por perfume', period],
+      columns: [
+        { header: 'Perfume', width: 36 }, { header: 'Marca', width: 16 }, { header: 'Unidades', width: 11, type: 'int' },
+        { header: 'Ventas', width: 15, type: 'money' }, { header: 'Costo', width: 15, type: 'money' },
+        { header: 'Comisiones', width: 14, type: 'money' }, { header: 'Ganancia', width: 15, type: 'money' },
+        { header: 'Margen', width: 10, type: 'percent' },
+      ],
+      rows: perfumeRows,
+      totals: ['TOTAL', '', totals.units, totals.sales, totals.cost, totals.commission, totals.profit, ''],
+    },
+    {
+      name: 'Detalle de ventas',
+      title: ['Detalle de ventas', period],
+      columns: [
+        { header: 'Fecha', width: 12 }, { header: 'Hora', width: 8 }, { header: 'Pedido', width: 9, type: 'int' },
+        { header: 'Cliente', width: 24 }, { header: 'Origen', width: 24 }, { header: 'Perfume', width: 34 },
+        { header: 'Cant.', width: 7, type: 'int' }, { header: 'Precio venta', width: 14, type: 'money' },
+        { header: 'Total venta', width: 14, type: 'money' }, { header: 'Precio compra', width: 14, type: 'money' },
+        { header: 'Costo total', width: 14, type: 'money' }, { header: 'Comisión', width: 12, type: 'money' },
+        { header: 'Ganancia', width: 14, type: 'money' }, { header: 'Estado', width: 15 }, { header: 'Pago', width: 11 },
+        { header: 'Entrega', width: 26 },
+      ],
+      rows: detail,
+      totals: ['TOTAL', '', '', '', '', '', totals.units, '', totals.sales, '', totals.cost, totals.commission, totals.profit, '', '', ''],
+    },
+    {
+      name: 'Inventario',
+      title: ['Inventario actual', `Al ${new Date().toLocaleDateString('es-BO')}`],
+      columns: [
+        { header: 'Perfume', width: 34 }, { header: 'Marca', width: 16 }, { header: 'ml', width: 7, type: 'int' },
+        { header: 'Stock', width: 9, type: 'int' }, { header: 'Precio compra', width: 14, type: 'money' },
+        { header: 'Precio venta', width: 14, type: 'money' }, { header: 'Comisión', width: 12, type: 'money' },
+        { header: 'Ganancia por unidad', width: 18, type: 'money' }, { header: 'Valor en stock (compra)', width: 22, type: 'money' },
+        { header: 'Valor en stock (venta)', width: 21, type: 'money' }, { header: 'Estado', width: 11 },
+      ],
+      rows: inventory,
+      totals: ['TOTAL', '', '', inventory.reduce((n, r) => n + (r[3] || 0), 0), '', '', '', '',
+        round2(inventory.reduce((n, r) => n + (r[8] || 0), 0)), round2(inventory.reduce((n, r) => n + (r[9] || 0), 0)), ''],
+    },
+  ]);
+  return { file: { body, name: `reporte-distinto-${from}-a-${to}.xlsx`, type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' } };
 });
 
 route('DELETE', '/api/admin/perfumes/:id', async (ctx) => {
@@ -1066,6 +1237,15 @@ const server = http.createServer(async (req, res) => {
         setHeader: (k, v) => (extraHeaders[k] = v),
       };
       const data = await r.handler(ctx);
+      if (data && data.file) {
+        res.writeHead(200, {
+          'Content-Type': data.file.type,
+          'Content-Disposition': `attachment; filename="${data.file.name}"`,
+          'Content-Length': data.file.body.length,
+          'Cache-Control': 'no-store',
+        });
+        return res.end(data.file.body);
+      }
       return send(res, 200, data, extraHeaders);
     }
     send(res, 404, { error: 'Ruta no encontrada' });

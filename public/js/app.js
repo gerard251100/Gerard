@@ -29,8 +29,10 @@ function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
+// Bs 1.234,50 (con punto de miles también desde 1.000).
 function money(n) {
-  return CURRENCY + Number(n || 0).toLocaleString('es', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const [int, dec] = Math.abs(Number(n) || 0).toFixed(2).split('.');
+  return `${Number(n) < 0 ? '−' : ''}${CURRENCY}${int.replace(/\B(?=(\d{3})+(?!\d))/g, '.')},${dec}`;
 }
 
 function fmtDate(sqlDate) {
@@ -1192,6 +1194,7 @@ async function viewAdmin(tab) {
     ['resumen', 'Resumen'],
     ['solicitudes', `Vendedores${summary.pendingVendors ? ` (${summary.pendingVendors})` : ''}`],
     ['catalogo', 'Catálogo'],
+    ['stock', 'Stock'],
     ['pedidos', `Pedidos${summary.openOrders ? ` (${summary.openOrders})` : ''}`],
     ['ranking', 'Ranking'],
     ['cuenta', 'Pagos y cuenta'],
@@ -1202,7 +1205,7 @@ async function viewAdmin(tab) {
     <div id="tabBody"></div>`;
   $$('[data-tab]').forEach((b) => b.addEventListener('click', () => viewAdmin(b.dataset.tab)));
   const body = $('#tabBody');
-  const views = { resumen: adminSummary, solicitudes: adminVendors, catalogo: adminPerfumes, pedidos: adminOrders, ranking: (b) => rankingView(b), cuenta: adminAccount };
+  const views = { resumen: adminSummary, solicitudes: adminVendors, catalogo: adminPerfumes, stock: adminStock, pedidos: adminOrders, ranking: (b) => rankingView(b), cuenta: adminAccount };
   await views[tab](body, summary);
 }
 
@@ -1368,6 +1371,125 @@ function stockControl(p) {
     </div>`;
 }
 
+/* ---- Stock: inventario con precio de compra y reportes en Excel ---- */
+async function adminStock(body) {
+  const { perfumes } = await api('/api/admin/inventory');
+  const today = new Date();
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const monthStart = iso(new Date(today.getFullYear(), today.getMonth(), 1));
+  const num = (v) => (v == null ? null : Number(v));
+  const totals = perfumes.reduce((t, p) => {
+    if (p.stock != null) {
+      t.units += p.stock;
+      t.sale += p.stock * p.suggested_price;
+      if (p.cost != null) { t.cost += p.stock * p.cost; t.profit += p.stock * (p.suggested_price - p.cost - p.commission); }
+    }
+    if (p.cost == null) t.noCost++;
+    return t;
+  }, { units: 0, cost: 0, sale: 0, profit: 0, noCost: 0 });
+
+  body.innerHTML = `
+    <div class="card report-card">
+      <div>
+        <div class="eyebrow" style="margin:0">Reporte en Excel</div>
+        <h3 style="margin:0.3rem 0">Ventas, costos y ganancias por fecha</h3>
+        <p class="small muted" style="margin:0">Incluye resumen, ventas por perfume, detalle de cada venta e inventario actual. No cuenta los pedidos cancelados.</p>
+      </div>
+      <form class="report-form" id="reportForm">
+        <div class="field"><label for="rp-from">Desde</label><input type="date" id="rp-from" name="from" value="${monthStart}" required></div>
+        <div class="field"><label for="rp-to">Hasta</label><input type="date" id="rp-to" name="to" value="${iso(today)}" required></div>
+        <div class="chips report-presets">
+          <button type="button" class="chip" data-range="today">Hoy</button>
+          <button type="button" class="chip" data-range="week">7 días</button>
+          <button type="button" class="chip active" data-range="month">Este mes</button>
+          <button type="button" class="chip" data-range="last">Mes pasado</button>
+        </div>
+        <button class="btn solid" type="submit">⬇ Descargar Excel</button>
+      </form>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="lbl">Unidades en stock</div><div class="val">${totals.units}</div></div>
+      <div class="stat"><div class="lbl">Invertido en stock (compra)</div><div class="val">${money(totals.cost)}</div></div>
+      <div class="stat"><div class="lbl">Valor a precio de venta</div><div class="val">${money(totals.sale)}</div></div>
+      <div class="stat"><div class="lbl">Ganancia si vendes todo</div><div class="val">${money(totals.profit)}</div></div>
+    </div>
+    ${totals.noCost ? `<p class="small muted">⚠ ${totals.noCost} ${totals.noCost === 1 ? 'perfume no tiene' : 'perfumes no tienen'} precio de compra. Complétalo para calcular bien las ganancias.</p>` : ''}
+
+    <div class="section-head" style="margin-top:1.5rem"><h2>Inventario</h2><input type="search" id="stockSearch" placeholder="Buscar perfume…" style="max-width:260px"></div>
+    ${perfumes.length ? `
+      <div class="table-wrap"><table class="stack stock-table">
+        <thead><tr><th>Perfume</th><th class="num">Stock</th><th class="num">Precio compra</th><th class="num">Precio venta</th><th class="num">Comisión</th><th class="num">Ganancia c/u</th><th class="num">Vendidos</th></tr></thead>
+        <tbody>
+          ${perfumes.map((p) => `
+            <tr data-row="${p.id}" data-search="${esc(`${p.brand || ''} ${p.name}`.toLowerCase())}">
+              <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}${p.active ? '' : ' · Oculto'}</div></td>
+              <td class="num" data-label="Stock"><input class="inv-input" type="number" min="0" step="1" data-field="stock" value="${p.stock ?? ''}" placeholder="∞"></td>
+              <td class="num" data-label="Precio compra"><input class="inv-input" type="number" min="0" step="0.01" data-field="cost" value="${p.cost ?? ''}" placeholder="—"></td>
+              <td class="num" data-label="Precio venta"><input class="inv-input" type="number" min="0" step="0.01" data-field="suggested_price" value="${p.suggested_price}"></td>
+              <td class="num" data-label="Comisión"><input class="inv-input" type="number" min="0" step="0.01" data-field="commission" value="${p.commission}"></td>
+              <td class="num" data-label="Ganancia c/u" data-profit>${profitCell(num(p.cost), p.suggested_price, p.commission)}</td>
+              <td class="num muted" data-label="Vendidos">${p.sold}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table></div>
+      <p class="small muted">Los cambios se guardan solos al salir de cada casilla. La ganancia por unidad es: precio de venta − precio de compra − comisión.</p>`
+      : '<div class="empty">Aún no hay perfumes. Agrégalos en la pestaña Catálogo.</div>'}`;
+
+  // Guardar cada casilla al cambiarla.
+  $$('.inv-input', body).forEach((input) => input.addEventListener('change', async () => {
+    const row = input.closest('tr');
+    try {
+      const { perfume } = await api(`/api/admin/perfumes/${row.dataset.row}/inventory`, { method: 'PATCH', body: { [input.dataset.field]: input.value } });
+      $('[data-profit]', row).innerHTML = profitCell(perfume.cost, perfume.suggested_price, perfume.commission);
+      input.classList.add('saved');
+      setTimeout(() => input.classList.remove('saved'), 900);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }));
+  $('#stockSearch', body)?.addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    $$('[data-row]', body).forEach((tr) => { tr.hidden = q && !tr.dataset.search.includes(q); });
+  });
+
+  // Rangos rápidos de fechas.
+  const form = $('#reportForm', body);
+  $$('[data-range]', body).forEach((chip) => chip.addEventListener('click', () => {
+    const d = new Date();
+    let from = new Date(d), to = new Date(d);
+    if (chip.dataset.range === 'week') from.setDate(d.getDate() - 6);
+    if (chip.dataset.range === 'month') from = new Date(d.getFullYear(), d.getMonth(), 1);
+    if (chip.dataset.range === 'last') { from = new Date(d.getFullYear(), d.getMonth() - 1, 1); to = new Date(d.getFullYear(), d.getMonth(), 0); }
+    form.from.value = iso(from);
+    form.to.value = iso(to);
+    $$('[data-range]', body).forEach((c) => c.classList.toggle('active', c === chip));
+  }));
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (form.from.value > form.to.value) { toast('La fecha "Desde" debe ser antes de "Hasta"', true); return; }
+    withBusy(e.submitter, async () => {
+      const res = await fetch(`/api/admin/report?from=${form.from.value}&to=${form.to.value}`, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'No se pudo generar el reporte');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `reporte-distinto-${form.from.value}-a-${form.to.value}.xlsx`;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      toast('Reporte descargado');
+    });
+  });
+}
+
+function profitCell(cost, price, commission) {
+  if (cost == null) return '<span class="muted">—</span>';
+  const profit = price - cost - commission;
+  return `<strong class="${profit < 0 ? 'neg' : ''}">${money(profit)}</strong>`;
+}
+
 function perfumeForm(p = {}) {
   const editing = Boolean(p.id);
   const root = openModal(`
@@ -1386,6 +1508,7 @@ function perfumeForm(p = {}) {
         <div class="field"><label for="p-size">Tamaño (ml)</label><input id="p-size" name="size_ml" type="number" min="1" value="${esc(p.size_ml || '')}"></div>
         <div class="field"><label for="p-price">Precio de venta (Bs) *</label><input id="p-price" name="suggested_price" type="number" min="0" step="0.01" required value="${esc(p.suggested_price ?? '')}"></div>
         <div class="field"><label for="p-comm">Comisión del vendedor (Bs) *</label><input id="p-comm" name="commission" type="number" min="0" step="0.01" required value="${esc(p.commission ?? '')}"></div>
+        <div class="field"><label for="p-cost">Precio de compra (Bs)</label><input id="p-cost" name="cost" type="number" min="0" step="0.01" value="${esc(p.cost ?? '')}" placeholder="Solo lo ves tú"></div>
         <div class="field"><label for="p-stock">Unidades en stock</label><input id="p-stock" name="stock" type="number" min="0" step="1" value="${esc(p.stock ?? '')}" placeholder="Ej: 10">
           <span class="small muted">Baja sola con cada pedido. Déjalo vacío si no quieres controlar el stock.</span></div>
         <div class="field full"><label for="p-desc">Descripción / notas olfativas</label><textarea id="p-desc" name="description">${esc(p.description || '')}</textarea></div>
