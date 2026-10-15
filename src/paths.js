@@ -32,6 +32,13 @@ function canWrite(dir) {
 // funcione; si ya hay datos guardados en alguno, se sigue usando ese.
 function chooseStoreDir() {
   if (process.env.STORE_DIR) return process.env.STORE_DIR;
+  // En Railway, si hay un disco (volumen) conectado, los datos van ahí aunque falte la variable STORE_DIR.
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) return process.env.RAILWAY_VOLUME_MOUNT_PATH;
+  if (process.env.RAILWAY_ENVIRONMENT) {
+    console.log('');
+    console.log('  AVISO: no hay un disco (volumen) conectado. Los perfumes y pedidos se BORRARAN');
+    console.log('  en cada actualizacion. Conecta un volumen en /data y pon STORE_DIR=/data.');
+  }
   const candidates = [path.join(os.homedir(), 'DistintoSCZ-datos')];
   if (process.env.LOCALAPPDATA) candidates.push(path.join(process.env.LOCALAPPDATA, 'DistintoSCZ-datos'));
   const withData = candidates.find((dir) => fs.existsSync(path.join(dir, 'data', 'perfumeria.db')) && canWrite(dir));
