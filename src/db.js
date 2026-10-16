@@ -161,6 +161,26 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_manual_sales_date ON manual_sales(sold_at);
 `);
+// Una venta (ticket) puede llevar varios perfumes: todas sus filas comparten el mismo "ticket".
+if (!db.prepare('PRAGMA table_info(manual_sales)').all().some((c) => c.name === 'ticket')) {
+  db.exec('ALTER TABLE manual_sales ADD COLUMN ticket TEXT');
+}
+// Compras de mercadería: suben el stock y guardan precio y fecha de compra.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS purchases (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket       TEXT NOT NULL,
+    perfume_id   INTEGER REFERENCES perfumes(id) ON DELETE SET NULL,
+    perfume_name TEXT NOT NULL,
+    brand        TEXT,
+    quantity     INTEGER NOT NULL,
+    unit_cost    REAL NOT NULL,
+    purchased_at TEXT NOT NULL,
+    supplier     TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_purchases_perfume ON purchases(perfume_id, purchased_at);
+`);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_token ON orders(track_token)');
 
 db.exec(`

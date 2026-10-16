@@ -856,3 +856,32 @@ body.soon-mode .wa-float { bottom: 22px; }
   .sale-form { grid-template-columns: 1fr 1fr; }
   .sale-form .sale-perfume, .sale-form .sale-note, .sale-form .btn { grid-column: 1 / -1; }
 }
+
+/* ---- Ventas y compras con varios perfumes ---- */
+.ops-grid { display: grid; gap: 1.2rem; margin-bottom: 1.5rem; }
+.op-card { display: grid; gap: 1rem; }
+.op-form { display: grid; gap: 0.6rem; }
+.op-head, .op-line { display: grid; grid-template-columns: minmax(0, 3fr) 5.5rem minmax(0, 1.3fr) 7rem 2.4rem; gap: 0.5rem; align-items: center; }
+.op-head { letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.62rem; }
+.op-lines { display: grid; gap: 0.5rem; }
+.op-line { animation: fadeUp 0.25s ease; }
+.op-sub { text-align: right; }
+.op-form [data-add-line] { justify-self: start; }
+.op-foot { display: grid; grid-template-columns: 11rem minmax(0, 1fr) auto auto; gap: 0.8rem; align-items: end; margin-top: 0.4rem; }
+.op-foot .field { margin: 0; }
+.op-foot input[type="date"] { color-scheme: dark; }
+.op-total { display: flex; flex-direction: column; align-items: flex-end; padding-bottom: 0.4rem; }
+.op-total strong { font-family: var(--serif); font-size: 1.4rem; }
+.op-history { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; gap: 0.6rem; }
+.op-history li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.6rem 0; border-bottom: 1px dotted var(--line-soft); }
+.op-hist-right { display: flex; align-items: center; gap: 0.6rem; white-space: nowrap; }
+@media (max-width: 720px) {
+  .op-head { display: none; }
+  .op-line { grid-template-columns: 1fr 1fr 2.4rem; padding: 0.7rem; border: 1px solid var(--line-soft); border-radius: 14px; }
+  .op-line select { grid-column: 1 / -1; }
+  .op-line .op-sub { grid-column: 1 / 3; text-align: left; }
+  .op-line [data-remove-line] { grid-column: 3; grid-row: 2; }
+  .op-foot { grid-template-columns: 1fr; }
+  .op-total { flex-direction: row; justify-content: space-between; align-items: baseline; }
+  .op-form [data-add-line] { justify-self: stretch; }
+}

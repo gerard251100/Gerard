@@ -1376,7 +1376,7 @@ function stockControl(p) {
 
 /* ---- Stock: inventario con precio de compra y reportes en Excel ---- */
 async function adminStock(body) {
-  const { perfumes, sales } = await api('/api/admin/inventory');
+  const { perfumes, sales, purchases } = await api('/api/admin/inventory');
   const today = new Date();
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const monthStart = iso(new Date(today.getFullYear(), today.getMonth(), 1));
@@ -1412,36 +1412,25 @@ async function adminStock(body) {
       </form>
     </div>
 
-    <div class="card sale-card">
-      <div>
-        <div class="eyebrow" style="margin:0">Venta fuera de la página</div>
-        <h3 style="margin:0.3rem 0">Registrar una venta</h3>
-        <p class="small muted" style="margin:0">Para lo que vendes en persona, por WhatsApp, etc. Baja tu stock y entra en el reporte. No cambia el precio de la página ni las comisiones.</p>
-      </div>
-      ${perfumes.length ? `
-      <form class="sale-form" id="saleForm">
-        <div class="field sale-perfume"><label for="ms-perfume">Perfume</label>
-          <select id="ms-perfume" name="perfume_id" required>
-            <option value="">Elige un perfume…</option>
-            ${perfumes.map((p) => `<option value="${p.id}">${esc([p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · '))}${p.stock != null ? ` (stock: ${p.stock})` : ''}</option>`).join('')}
-          </select></div>
-        <div class="field"><label for="ms-qty">Cantidad</label><input id="ms-qty" name="quantity" type="number" min="1" step="1" value="1" required></div>
-        <div class="field"><label for="ms-price">Precio c/u (Bs)</label><input id="ms-price" name="unit_price" type="number" min="0" step="0.01" required></div>
-        <div class="field"><label for="ms-date">Fecha</label><input id="ms-date" name="sold_at" type="date" value="${iso(today)}" required></div>
-        <div class="field sale-note"><label for="ms-note">Nota (opcional)</label><input id="ms-note" name="note" maxlength="200" placeholder="Ej: cliente, en tienda, feria…"></div>
-        <button class="btn solid" type="submit">Registrar venta</button>
-      </form>` : ''}
-      ${sales.length ? `
-        <details class="sale-history">
-          <summary class="small">Últimas ventas fuera de la página (${sales.length})</summary>
-          <ul class="order-items">
-            ${sales.map((m) => `<li><span>${fmtDay(m.sold_at)} · ${m.quantity} × ${esc(m.perfume_name)} · ${money(m.unit_price)} c/u${m.note ? ` · <span class="muted">${esc(m.note)}</span>` : ''}</span>
-              <button type="button" class="btn sm ghost danger" data-del-sale="${m.id}" aria-label="Borrar venta">×</button></li>`).join('')}
-          </ul>
-        </details>` : ''}
+    <div class="ops-grid">
+      ${opCard({
+        id: 'saleForm', kind: 'sale', eyebrow: 'Venta fuera de la página', title: 'Registrar una venta',
+        help: 'Para lo que vendes en persona, por WhatsApp, etc. Puedes poner varios perfumes. Baja tu stock y entra en el reporte; no cambia el precio de la página ni las comisiones.',
+        priceLabel: 'Precio venta c/u', dateName: 'sold_at', extra: '<div class="field"><label>Nota (opcional)</label><input name="note" maxlength="200" placeholder="Ej: cliente, en tienda, feria…"></div>',
+        button: 'Registrar venta', perfumes, today: iso(today),
+        history: sales, historyTitle: 'Últimas ventas fuera de la página', priceKey: 'unit_price', delAttr: 'data-del-sale',
+      })}
+      ${opCard({
+        id: 'buyForm', kind: 'buy', eyebrow: 'Compra de mercadería', title: 'Ingresar stock comprado',
+        help: 'Registra lo que compraste: suma al stock y guarda el precio y la fecha de compra (salen en el Excel).',
+        priceLabel: 'Precio compra c/u', dateName: 'purchased_at', extra: '<div class="field"><label>Proveedor (opcional)</label><input name="supplier" maxlength="120" placeholder="Ej: distribuidor, importadora…"></div>',
+        button: 'Ingresar compra', perfumes, today: iso(today),
+        history: purchases, historyTitle: 'Últimas compras', priceKey: 'unit_cost', delAttr: 'data-del-buy',
+      })}
     </div>
 
     <div class="stats">
+      <div class="stat"><div class="lbl">Unidades en stock</div>    <div class="stats">
       <div class="stat"><div class="lbl">Unidades en stock</div><div class="val">${totals.units}</div></div>
       <div class="stat"><div class="lbl">Invertido en stock (compra)</div><div class="val">${money(totals.cost)}</div></div>
       <div class="stat"><div class="lbl">Valor a mi precio de venta</div><div class="val">${money(totals.sale)}</div></div>
@@ -1456,7 +1445,7 @@ async function adminStock(body) {
         <tbody>
           ${perfumes.map((p) => `
             <tr data-row="${p.id}" data-search="${esc(`${p.brand || ''} ${p.name}`.toLowerCase())}">
-              <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}${p.active ? '' : ' · Oculto'}</div></td>
+              <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}${p.active ? '' : ' · Oculto'}</div>${p.last_purchase ? `<div class="small muted">Última compra: ${fmtDay(p.last_purchase)}</div>` : ''}</td>
               <td class="num" data-label="Stock"><input class="inv-input" type="number" min="0" step="1" data-field="stock" value="${p.stock ?? ''}" placeholder="∞"></td>
               <td class="num" data-label="Precio compra"><input class="inv-input" type="number" min="0" step="0.01" data-field="cost" value="${p.cost ?? ''}" placeholder="—"></td>
               <td class="num" data-label="Mi precio venta"><input class="inv-input" type="number" min="0" step="0.01" data-field="store_price" value="${p.store_price ?? ''}" placeholder="${p.suggested_price}"></td>
@@ -1486,30 +1475,23 @@ async function adminStock(body) {
     $$('[data-row]', body).forEach((tr) => { tr.hidden = q && !tr.dataset.search.includes(q); });
   });
 
-  // Venta fuera de la página: el precio se completa con tu precio de venta.
-  const saleForm = $('#saleForm', body);
-  if (saleForm) {
-    saleForm.perfume_id.addEventListener('change', () => {
-      const p = byId[saleForm.perfume_id.value];
-      saleForm.unit_price.value = p ? myPrice(p) : '';
-    });
-    saleForm.addEventListener('submit', (e) => {
-      e.preventDefault();
-      withBusy(e.submitter, async () => {
-        await api('/api/admin/manual-sales', { method: 'POST', body: formData(saleForm) });
-        toast('Venta registrada');
-        adminStock(body);
-      });
-    });
-  }
-  $$('[data-del-sale]', body).forEach((b) => b.addEventListener('click', () => {
-    if (!confirm('¿Borrar esta venta? Las unidades vuelven a tu stock.')) return;
+  // Formularios de venta y compra con varios perfumes.
+  bindOpForm($('#saleForm', body), {
+    defaultPrice: (p) => myPrice(p), url: '/api/admin/manual-sales', priceKey: 'unit_price', done: 'Venta registrada', reload: () => adminStock(body),
+  }, byId);
+  bindOpForm($('#buyForm', body), {
+    defaultPrice: (p) => p.cost ?? '', url: '/api/admin/purchases', priceKey: 'unit_cost', done: 'Compra ingresada al stock', reload: () => adminStock(body),
+  }, byId);
+  const delOp = (attr, url, question, done) => $$(`[${attr}]`, body).forEach((b) => b.addEventListener('click', () => {
+    if (!confirm(question)) return;
     withBusy(b, async () => {
-      await api(`/api/admin/manual-sales/${b.dataset.delSale}`, { method: 'DELETE' });
-      toast('Venta borrada');
+      await api(`${url}/${b.getAttribute(attr)}`, { method: 'DELETE' });
+      toast(done);
       adminStock(body);
     });
   }));
+  delOp('data-del-sale', '/api/admin/manual-sales', '¿Borrar esta venta completa? Las unidades vuelven a tu stock.', 'Venta borrada');
+  delOp('data-del-buy', '/api/admin/purchases', '¿Borrar esta compra completa? Esas unidades se restan del stock.', 'Compra borrada');
 
   // Rangos rápidos de fechas.
   const form = $('#reportForm', body);
@@ -1538,6 +1520,93 @@ async function adminStock(body) {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       toast('Reporte descargado');
+    });
+  });
+}
+
+// Tarjeta de venta o compra con filas de perfumes (se pueden agregar varias).
+function opCard({ id, kind, eyebrow, title, help, priceLabel, dateName, extra, button, perfumes, today, history, historyTitle, priceKey, delAttr }) {
+  if (!perfumes.length) return '';
+  const options = perfumes.map((p) => `<option value="${p.id}">${esc([p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · '))}${p.stock != null ? ` (stock: ${p.stock})` : ''}</option>`).join('');
+  return `
+    <div class="card op-card op-${kind}">
+      <div>
+        <div class="eyebrow" style="margin:0">${eyebrow}</div>
+        <h3 style="margin:0.3rem 0">${title}</h3>
+        <p class="small muted" style="margin:0">${help}</p>
+      </div>
+      <form class="op-form" id="${id}">
+        <template data-line-tpl>
+          <div class="op-line">
+            <select data-l="perfume_id" required aria-label="Perfume"><option value="">Elige un perfume…</option>${options}</select>
+            <input data-l="quantity" type="number" min="1" step="1" value="1" required aria-label="Cantidad" placeholder="Cant.">
+            <input data-l="${priceKey}" type="number" min="0" step="0.01" required aria-label="${priceLabel}" placeholder="${priceLabel}">
+            <span class="op-sub muted small" data-sub></span>
+            <button type="button" class="btn sm ghost danger" data-remove-line aria-label="Quitar">×</button>
+          </div>
+        </template>
+        <div class="op-head small muted"><span>Perfume</span><span>Cant.</span><span>${priceLabel} (Bs)</span><span>Subtotal</span><span></span></div>
+        <div class="op-lines" data-lines></div>
+        <button type="button" class="btn sm" data-add-line>+ Agregar otro perfume</button>
+        <div class="op-foot">
+          <div class="field"><label>Fecha</label><input type="date" name="${dateName}" value="${today}" required></div>
+          ${extra}
+          <div class="op-total"><span class="muted small">Total</span><strong data-total>${money(0)}</strong></div>
+          <button class="btn solid" type="submit">${button}</button>
+        </div>
+      </form>
+      ${history.length ? `
+        <details class="sale-history">
+          <summary class="small">${historyTitle} (${history.length})</summary>
+          <ul class="op-history">
+            ${history.map((h) => `<li>
+              <div><strong>${fmtDay(h.date)}</strong>${h.note ? ` · <span class="muted">${esc(h.note)}</span>` : ''}
+                <div class="small muted">${h.lines.map((l) => `${l.quantity} × ${esc(l.perfume_name)} · ${money(l[priceKey])}`).join('<br>')}</div></div>
+              <div class="op-hist-right"><strong>${money(h.lines.reduce((n, l) => n + l.quantity * l[priceKey], 0))}</strong>
+                <button type="button" class="btn sm ghost danger" ${delAttr}="${h.id}" aria-label="Borrar">×</button></div>
+            </li>`).join('')}
+          </ul>
+        </details>` : ''}
+    </div>`;
+}
+
+function bindOpForm(form, { defaultPrice, url, priceKey, done, reload }, byId) {
+  if (!form) return;
+  const box = $('[data-lines]', form);
+  const tpl = $('[data-line-tpl]', form);
+  const refresh = () => {
+    let total = 0;
+    $$('.op-line', box).forEach((line) => {
+      const sub = (Number($('[data-l="quantity"]', line).value) || 0) * (Number($(`[data-l="${priceKey}"]`, line).value) || 0);
+      total += sub;
+      $('[data-sub]', line).textContent = sub ? money(sub) : '';
+    });
+    $('[data-total]', form).textContent = money(total);
+    $$('[data-remove-line]', box).forEach((b) => { b.disabled = $$('.op-line', box).length === 1; });
+  };
+  const addLine = () => {
+    box.append(tpl.content.cloneNode(true));
+    const line = box.lastElementChild;
+    $('[data-l="perfume_id"]', line).addEventListener('change', (e) => {
+      const p = byId[e.target.value];
+      $(`[data-l="${priceKey}"]`, line).value = p ? defaultPrice(p) : '';
+      refresh();
+    });
+    $$('input', line).forEach((i) => i.addEventListener('input', refresh));
+    $('[data-remove-line]', line).addEventListener('click', () => { line.remove(); refresh(); });
+    refresh();
+  };
+  $('[data-add-line]', form).addEventListener('click', addLine);
+  addLine();
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const items = $$('.op-line', box).map((line) => Object.fromEntries($$('[data-l]', line).map((el) => [el.dataset.l, el.value])));
+    const ids = items.map((it) => it.perfume_id);
+    if (new Set(ids).size !== ids.length) { toast('Ese perfume ya está en otra fila: súmalo en la cantidad', true); return; }
+    withBusy(e.submitter, async () => {
+      await api(url, { method: 'POST', body: { ...formData(form), items } });
+      toast(done);
+      reload();
     });
   });
 }
