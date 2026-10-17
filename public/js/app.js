@@ -1944,11 +1944,15 @@ async function adminAccount(body) {
         <button class="btn solid" type="submit">Guardar</button>
       </form>
       <form class="card form" id="passForm">
-        <h3>Cambiar contraseña</h3>
-        <p class="small muted">Sesión iniciada como ${esc(state.user.email)}</p>
-        <div class="field"><label for="a-cur">Contraseña actual</label><input id="a-cur" name="current" type="password" required autocomplete="current-password"></div>
-        <div class="field"><label for="a-new">Nueva contraseña</label><input id="a-new" name="next" type="password" required minlength="6" autocomplete="new-password"></div>
-        <button class="btn solid" type="submit">Guardar</button>
+        <h3>Usuario y contraseña</h3>
+        <p class="small muted">Usuario actual: <strong style="color:var(--fg)">${esc(state.user.email)}</strong>.
+          Al guardar se cierra tu sesión en <strong style="color:var(--fg)">todos</strong> los dispositivos y vuelves a entrar con los datos nuevos.</p>
+        <div class="field"><label for="a-email">Nuevo usuario (correo)</label><input id="a-email" name="email" type="email" autocomplete="username" value="${esc(state.user.email)}"></div>
+        <div class="field"><label for="a-new">Nueva contraseña (mínimo 8)</label><input id="a-new" name="next" type="password" minlength="8" autocomplete="new-password" placeholder="Déjala vacía para no cambiarla"></div>
+        <div class="field"><label for="a-new2">Repite la nueva contraseña</label><input id="a-new2" name="confirm" type="password" minlength="8" autocomplete="new-password"></div>
+        <div class="field"><label for="a-cur">Contraseña actual *</label><input id="a-cur" name="current" type="password" required autocomplete="current-password"></div>
+        <button class="btn solid" type="submit">Guardar y cerrar todas las sesiones</button>
+        <button class="btn ghost" type="button" id="logoutAll">Solo cerrar sesión en todos los dispositivos</button>
       </form>
     </div>`;
   renderShareCard($('#shareCard'));
@@ -1971,12 +1975,25 @@ async function adminAccount(body) {
       toast('Ajustes guardados');
     });
   });
+  const backToLogin = (message) => {
+    state.user = null;
+    toast(message);
+    location.hash = '#/login';
+    renderNav();
+  };
   $('#passForm').addEventListener('submit', (e) => {
     e.preventDefault();
+    if (!confirm('Se cerrará tu sesión en todos los dispositivos (también en este). ¿Continuar?')) return;
     withBusy(e.submitter, async () => {
-      await api('/api/me/password', { method: 'POST', body: formData(e.target) });
-      e.target.reset();
-      toast('Contraseña actualizada');
+      const { email } = await api('/api/me/credentials', { method: 'POST', body: formData(e.target) });
+      backToLogin(`Listo. Entra con tu usuario ${email} y la contraseña nueva.`);
+    });
+  });
+  $('#logoutAll').addEventListener('click', (e) => {
+    if (!confirm('¿Cerrar tu sesión en todos los dispositivos (también en este)?')) return;
+    withBusy(e.currentTarget, async () => {
+      await api('/api/me/logout-all', { method: 'POST' });
+      backToLogin('Sesión cerrada en todos los dispositivos');
     });
   });
 }

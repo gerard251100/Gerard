@@ -251,13 +251,50 @@ route('POST', '/api/logout', async (ctx) => {
 
 route('GET', '/api/me', async (ctx) => ({ user: ctx.user ? publicUser(ctx.user) : null }));
 
+// Cambiar contraseña: cierra la sesión en los demás dispositivos.
 route('POST', '/api/me/password', async (ctx) => {
   const user = requireUser(ctx);
   const current = String(ctx.body.current || '');
   const next = String(ctx.body.next || '');
   if (!verifyPassword(current, user.password_hash)) throw new HttpError(400, 'La contraseña actual no es correcta');
   if (next.length < 6) throw new HttpError(400, 'La nueva contraseña debe tener al menos 6 caracteres');
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(next), user.id);
+  const token = parseCookies(ctx.req).session;
+  transaction(() => {
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(next), user.id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(user.id, token || '');
+  });
+  return { ok: true };
+});
+
+// Cambiar usuario (correo) y/o contraseña y cerrar la sesión en TODOS los dispositivos (también en este).
+route('POST', '/api/me/credentials', async (ctx) => {
+  const user = requireUser(ctx);
+  const b = ctx.body;
+  if (!verifyPassword(String(b.current || ''), user.password_hash)) throw new HttpError(400, 'La contraseña actual no es correcta');
+  const email = text(b.email, 150).toLowerCase() || user.email;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'El usuario debe ser un correo válido (ej: nombre@gmail.com)');
+  if (email !== user.email && db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, user.id)) {
+    throw new HttpError(409, 'Ya existe otra cuenta con ese correo');
+  }
+  const next = String(b.next || '');
+  if (next) {
+    if (next.length < 8) throw new HttpError(400, 'La nueva contraseña debe tener al menos 8 caracteres');
+    if (next !== String(b.confirm || '')) throw new HttpError(400, 'Las dos contraseñas nuevas no coinciden');
+  }
+  if (email === user.email && !next) throw new HttpError(400, 'Escribe un usuario nuevo o una contraseña nueva');
+  transaction(() => {
+    db.prepare('UPDATE users SET email = ?, password_hash = ? WHERE id = ?').run(email, next ? hashPassword(next) : user.password_hash, user.id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+  });
+  ctx.setHeader('Set-Cookie', sessionCookie('', 0, ctx.req));
+  return { ok: true, email };
+});
+
+// Cerrar la sesión en todos los dispositivos.
+route('POST', '/api/me/logout-all', async (ctx) => {
+  const user = requireUser(ctx);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+  ctx.setHeader('Set-Cookie', sessionCookie('', 0, ctx.req));
   return { ok: true };
 });
 
