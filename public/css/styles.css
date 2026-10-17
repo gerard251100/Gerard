@@ -885,3 +885,14 @@ body.soon-mode .wa-float { bottom: 22px; }
   .op-total { flex-direction: row; justify-content: space-between; align-items: baseline; }
   .op-form [data-add-line] { justify-self: stretch; }
 }
+
+/* ---- Ver contraseña ---- */
+.pw-wrap { position: relative; display: block; }
+.pw-wrap input { padding-right: 3rem; }
+.pw-eye {
+  position: absolute; right: 0.35rem; top: 50%; transform: translateY(-50%);
+  width: 2.3rem; height: 2.3rem; display: flex; align-items: center; justify-content: center;
+  background: none; border: none; border-radius: 999px; color: var(--muted); cursor: pointer; transition: color 0.2s, background 0.2s;
+}
+.pw-eye:hover, .pw-eye.on { color: var(--fg); background: rgba(255, 255, 255, 0.08); }
+.pw-eye svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
