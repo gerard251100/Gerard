@@ -1047,6 +1047,68 @@ function progressBar(status) {
     `<div class="step ${i <= idx ? 'done' : ''}">${STATUS_LABELS[s]}</div>`).join('')}</div>`;
 }
 
+// Ventana que pide la contraseña del administrador antes de una acción delicada.
+function confirmWithPassword({ title, message, button, action, extraHtml = '', collect = () => ({}) }) {
+  const root = openModal(`
+    <div class="eyebrow">Confirmar con tu contraseña</div>
+    <h3>${esc(title)}</h3>
+    ${message ? `<p class="muted small">${esc(message)}</p>` : ''}
+    <form class="form" id="pwConfirm">
+      ${extraHtml}
+      <div class="field"><label for="pc-pass">Contraseña de administrador</label><input id="pc-pass" type="password" required autocomplete="current-password"></div>
+      <div class="btn-row">
+        <button class="btn solid danger-solid" type="submit">${esc(button)}</button>
+        <button class="btn ghost" type="button" id="pcCancel">Cancelar</button>
+      </div>
+    </form>`);
+  $('#pcCancel', root).addEventListener('click', closeModal);
+  const form = $('#pwConfirm', root);
+  setTimeout(() => (form.querySelector('[data-first]') || $('#pc-pass', root)).focus(), 50);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const extra = collect(form);
+    if (extra === null) return;
+    withBusy(e.submitter, async () => {
+      await action($('#pc-pass', root).value, extra);
+      closeModal();
+    });
+  });
+}
+
+// Devolución: el administrador elige cuántas unidades le devolvieron de cada perfume.
+function returnModal({ title, lines, action }) {
+  confirmWithPassword({
+    title,
+    message: 'Pon cuántas unidades te devolvieron de cada perfume (0 si no devolvieron ese). Las unidades vuelven a tu stock.',
+    button: 'Confirmar devolución',
+    extraHtml: `
+      <div class="return-lines">
+        ${lines.map((l, i) => `
+          <div class="return-line">
+            <div><strong>${esc(l.name)}</strong><div class="small muted">Vendidos: ${l.qty} · ${money(l.price)} c/u</div></div>
+            <input type="number" min="0" max="${l.qty}" step="1" value="${l.qty}" data-ret="${i}" aria-label="Unidades devueltas" ${i === 0 ? 'data-first' : ''}>
+          </div>`).join('')}
+      </div>
+      <div class="return-total small">Se devuelve: <strong data-ret-total></strong></div>
+      <div class="field"><label for="rt-note">Motivo (opcional)</label><input id="rt-note" maxlength="200" placeholder="Ej: no le gustó, venía dañado…"></div>`,
+    collect: (form) => {
+      const items = lines.map((l, i) => ({ id: l.id, quantity: Math.floor(Number($(`[data-ret="${i}"]`, form).value)) || 0 }))
+        .filter((it) => it.quantity > 0);
+      if (!items.length) { toast('Pon al menos 1 unidad devuelta', true); return null; }
+      if (items.some((it) => it.quantity > lines.find((l) => l.id === it.id).qty)) { toast('No puedes devolver más de lo vendido', true); return null; }
+      return { items, note: $('#rt-note', form).value };
+    },
+    action: (password, { items, note }) => action(items, password, note),
+  });
+  const form = $('#pwConfirm');
+  const sum = () => {
+    const total = lines.reduce((n, l, i) => n + Math.min(l.qty, Math.max(0, Number($(`[data-ret="${i}"]`, form).value) || 0)) * l.price, 0);
+    $('[data-ret-total]', form).textContent = money(total);
+  };
+  $$('[data-ret]', form).forEach((i) => i.addEventListener('input', sum));
+  sum();
+}
+
 function orderCard(o, { admin = false, statuses = [] } = {}) {
   const direct = o.source === 'cliente';
   const who = direct
@@ -1082,6 +1144,7 @@ function orderCard(o, { admin = false, statuses = [] } = {}) {
         </div>
         <div class="btn-row">
           <button class="btn sm ghost" data-detail="${o.id}">Historial</button>
+          ${admin && o.status !== 'cancelado' ? `<button class="btn sm ghost" data-return-order="${o.id}">↩ Devolución</button>` : ''}
           ${admin ? `<button class="btn sm ghost danger" data-delete-order="${o.id}">Eliminar</button>` : ''}
           ${admin ? `
             ${o.payment_status === 'pagado'
@@ -1490,7 +1553,18 @@ async function adminStock(body) {
       adminStock(body);
     });
   }));
-  delOp('data-del-sale', '/api/admin/manual-sales', '¿Borrar esta venta completa? Las unidades vuelven a tu stock.', 'Venta borrada');
+  $$('[data-del-sale]', body).forEach((b) => b.addEventListener('click', () => {
+    const ticket = sales.find((h) => String(h.id) === b.dataset.delSale);
+    returnModal({
+      title: `Devolución · venta del ${fmtDay(ticket.date)}`,
+      lines: ticket.lines.map((l) => ({ id: l.id, name: l.perfume_name, qty: l.quantity, price: l.unit_price })),
+      action: async (items, password) => {
+        await api('/api/admin/manual-sales/return', { method: 'POST', body: { items, password } });
+        toast('Devolución registrada: las unidades volvieron al stock');
+        adminStock(body);
+      },
+    });
+  }));
   delOp('data-del-buy', '/api/admin/purchases', '¿Borrar esta compra completa? Esas unidades se restan del stock.', 'Compra borrada');
 
   // Rangos rápidos de fechas.
@@ -1563,7 +1637,7 @@ function opCard({ id, kind, eyebrow, title, help, priceLabel, dateName, extra, b
               <div><strong>${fmtDay(h.date)}</strong>${h.note ? ` · <span class="muted">${esc(h.note)}</span>` : ''}
                 <div class="small muted">${h.lines.map((l) => `${l.quantity} × ${esc(l.perfume_name)} · ${money(l[priceKey])}`).join('<br>')}</div></div>
               <div class="op-hist-right"><strong>${money(h.lines.reduce((n, l) => n + l.quantity * l[priceKey], 0))}</strong>
-                <button type="button" class="btn sm ghost danger" ${delAttr}="${h.id}" aria-label="Borrar">×</button></div>
+                <button type="button" class="btn sm ghost${kind === 'sale' ? '' : ' danger'}" ${delAttr}="${h.id}" aria-label="${kind === 'sale' ? 'Devolución' : 'Borrar'}">${kind === 'sale' ? '↩ Devolución' : '×'}</button></div>
             </li>`).join('')}
           </ul>
         </details>` : ''}
@@ -1723,22 +1797,43 @@ async function adminOrders(body, _s, filter = '', source = '') {
   };
   picks.forEach((c) => c.addEventListener('change', refreshBulk));
   $('#pickAll', body)?.addEventListener('change', (e) => { picks.forEach((c) => { c.checked = e.target.checked; }); refreshBulk(); });
-  $('#deletePicked', body)?.addEventListener('click', (e) => {
+  $('#deletePicked', body)?.addEventListener('click', () => {
     const ids = picked();
-    if (!ids.length || !confirm(`¿Eliminar ${ids.length} pedido(s)? Se borran por completo y no se puede deshacer.`)) return;
-    withBusy(e.currentTarget, async () => {
-      const { deleted } = await api('/api/admin/orders/delete', { method: 'POST', body: { ids } });
-      toast(`${deleted} pedido(s) eliminado(s)`);
-      reload();
+    if (!ids.length) return;
+    confirmWithPassword({
+      title: `Eliminar ${ids.length} pedido(s)`,
+      message: 'Se borran por completo y no se puede deshacer. Si no fueron entregados, las unidades vuelven al stock.',
+      button: 'Eliminar',
+      action: async (password) => {
+        const { deleted } = await api('/api/admin/orders/delete', { method: 'POST', body: { ids, password } });
+        toast(`${deleted} pedido(s) eliminado(s)`);
+        reload();
+      },
     });
   });
   $$('[data-delete-order]', body).forEach((b) => b.addEventListener('click', () => {
     const id = b.dataset.deleteOrder;
-    if (!confirm(`¿Eliminar el pedido #${id}? Se borra por completo y no se puede deshacer.`)) return;
-    withBusy(b, async () => {
-      await api(`/api/orders/${id}`, { method: 'DELETE' });
-      toast(`Pedido #${id} eliminado`);
-      reload();
+    confirmWithPassword({
+      title: `Eliminar el pedido #${id}`,
+      message: 'Se borra por completo y no se puede deshacer. Si te devolvieron solo algunos perfumes, usa "Devolución".',
+      button: 'Eliminar',
+      action: async (password) => {
+        await api(`/api/orders/${id}`, { method: 'DELETE', body: { password } });
+        toast(`Pedido #${id} eliminado`);
+        reload();
+      },
+    });
+  }));
+  $$('[data-return-order]', body).forEach((b) => b.addEventListener('click', () => {
+    const o = orders.find((x) => x.id === Number(b.dataset.returnOrder));
+    returnModal({
+      title: `Devolución · Pedido #${o.id}`,
+      lines: o.items.map((it) => ({ id: it.id, name: it.perfume_name, qty: it.quantity, price: it.unit_price })),
+      action: async (items, password, note) => {
+        const { full } = await api(`/api/orders/${o.id}/return`, { method: 'POST', body: { items: items.map((it) => ({ item_id: it.id, quantity: it.quantity })), password, note } });
+        toast(full ? `Pedido #${o.id} devuelto completo (quedó cancelado)` : `Devolución registrada en el pedido #${o.id}`);
+        reload();
+      },
     });
   }));
   $$('[data-source]', body).forEach((c) => c.addEventListener('click', () => adminOrders(body, null, filter, c.dataset.source)));

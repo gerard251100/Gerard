@@ -114,6 +114,18 @@ function requireAdmin(ctx) {
   return user;
 }
 
+// Acciones delicadas (borrar ventas, devoluciones): piden otra vez la contraseña del administrador.
+function requireAdminPassword(ctx) {
+  const admin = requireAdmin(ctx);
+  const key = `admin-confirm:${admin.id}`;
+  if (tooMany(key, 10, 15 * MINUTE)) throw new HttpError(429, 'Demasiados intentos. Espera 15 minutos.');
+  if (!verifyPassword(String(ctx.body.password || ''), admin.password_hash)) {
+    countHit(key, 15 * MINUTE);
+    throw new HttpError(403, 'Contraseña de administrador incorrecta');
+  }
+  return admin;
+}
+
 function requireMember(ctx) {
   const user = requireUser(ctx);
   if (user.role === 'admin') return user;
@@ -672,16 +684,56 @@ function deleteOrders(ids) {
 }
 
 route('DELETE', '/api/orders/:id', async (ctx) => {
-  requireAdmin(ctx);
+  requireAdminPassword(ctx);
   const deleted = deleteOrders([ctx.params.id]);
   if (!deleted) throw new HttpError(404, 'Pedido no encontrado');
   return { deleted };
 });
 
 route('POST', '/api/admin/orders/delete', async (ctx) => {
-  requireAdmin(ctx);
+  requireAdminPassword(ctx);
   if (!Array.isArray(ctx.body.ids)) throw new HttpError(400, 'No se eligió ningún pedido');
   return { deleted: deleteOrders(ctx.body.ids.slice(0, 1000)) };
+});
+
+// Devolución de un pedido de la página: todo o una parte. Las unidades vuelven al stock.
+route('POST', '/api/orders/:id/return', async (ctx) => {
+  requireAdminPassword(ctx);
+  const id = Number(ctx.params.id);
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+  if (!order) throw new HttpError(404, 'Pedido no encontrado');
+  if (order.status === 'cancelado') throw new HttpError(400, 'Este pedido ya está cancelado');
+  const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id);
+  const wanted = new Map((Array.isArray(ctx.body.items) ? ctx.body.items : []).map((it) => [Number(it.item_id), Math.floor(Number(it.quantity)) || 0]));
+  const returns = items.map((it) => {
+    const qty = wanted.get(it.id) || 0;
+    if (qty < 0 || qty > it.quantity) throw new HttpError(400, `Cantidad inválida para ${it.perfume_name}`);
+    return { it, qty };
+  }).filter((r) => r.qty > 0);
+  if (!returns.length) throw new HttpError(400, 'Indica cuántas unidades te devolvieron');
+  const all = returns.length === items.length && returns.every((r) => r.qty === r.it.quantity);
+  const note = `Devolución: ${returns.map((r) => `${r.qty} × ${r.it.perfume_name}`).join(', ')}${text(ctx.body.note, 200) ? ` · ${text(ctx.body.note, 200)}` : ''}`;
+  transaction(() => {
+    if (order.stock_taken) {
+      const give = db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL');
+      for (const r of returns) if (r.it.perfume_id) give.run(r.qty, r.it.perfume_id);
+    }
+    if (all) {
+      // Devolución total: el pedido queda cancelado (no cuenta en reportes ni ranking).
+      db.prepare(`UPDATE orders SET status = 'cancelado', admin_note = ?, stock_taken = 0, updated_at = datetime('now') WHERE id = ?`).run(note, id);
+      db.prepare(`INSERT INTO order_history (order_id, status, note) VALUES (?, 'cancelado', ?)`).run(id, note);
+    } else {
+      for (const r of returns) {
+        if (r.qty === r.it.quantity) db.prepare('DELETE FROM order_items WHERE id = ?').run(r.it.id);
+        else db.prepare('UPDATE order_items SET quantity = quantity - ? WHERE id = ?').run(r.qty, r.it.id);
+      }
+      const t = db.prepare('SELECT COALESCE(SUM(quantity * unit_price), 0) AS total, COALESCE(SUM(quantity * unit_commission), 0) AS comm FROM order_items WHERE order_id = ?').get(id);
+      db.prepare(`UPDATE orders SET total = ?, total_commission = ?, updated_at = datetime('now') WHERE id = ?`)
+        .run(Math.round(t.total * 100) / 100, Math.round(t.comm * 100) / 100, id);
+      db.prepare('INSERT INTO order_history (order_id, status, note) VALUES (?, ?, ?)').run(id, order.status, note);
+    }
+  });
+  return { order: loadOrder(id), full: all };
 });
 
 route('PATCH', '/api/orders/:id/payment', async (ctx) => {
@@ -768,7 +820,7 @@ route('GET', '/api/orders', async (ctx) => {
        ORDER BY o.id DESC LIMIT 500`
     )
     .all(...params);
-  const getItems = db.prepare('SELECT perfume_name, quantity, unit_price, unit_commission FROM order_items WHERE order_id = ?');
+  const getItems = db.prepare('SELECT id, perfume_name, quantity, unit_price, unit_commission FROM order_items WHERE order_id = ?');
   for (const o of orders) o.items = getItems.all(o.id);
   return { orders, statuses: ORDER_STATUSES };
 });
@@ -1103,7 +1155,7 @@ route('POST', '/api/admin/manual-sales', async (ctx) => {
 
 // Borrar una venta registrada por error (con todos sus perfumes): las unidades vuelven al stock.
 route('DELETE', '/api/admin/manual-sales/:id', async (ctx) => {
-  requireAdmin(ctx);
+  requireAdminPassword(ctx);
   const sale = db.prepare('SELECT * FROM manual_sales WHERE id = ?').get(Number(ctx.params.id));
   if (!sale) throw new HttpError(404, 'Venta no encontrada');
   const rows = sale.ticket ? db.prepare('SELECT * FROM manual_sales WHERE ticket = ?').all(sale.ticket) : [sale];
@@ -1112,6 +1164,27 @@ route('DELETE', '/api/admin/manual-sales/:id', async (ctx) => {
     for (const r of rows) {
       if (r.perfume_id) give.run(r.quantity, r.perfume_id);
       db.prepare('DELETE FROM manual_sales WHERE id = ?').run(r.id);
+    }
+  });
+  return { ok: true };
+});
+
+// Devolución de una venta fuera de la página: todo o una parte. Las unidades vuelven al stock.
+route('POST', '/api/admin/manual-sales/return', async (ctx) => {
+  requireAdminPassword(ctx);
+  const list = (Array.isArray(ctx.body.items) ? ctx.body.items : [])
+    .map((it) => ({ id: Number(it.id), qty: Math.floor(Number(it.quantity)) || 0 })).filter((r) => r.qty > 0);
+  if (!list.length) throw new HttpError(400, 'Indica cuántas unidades te devolvieron');
+  const get = db.prepare('SELECT * FROM manual_sales WHERE id = ?');
+  transaction(() => {
+    const give = db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL');
+    for (const r of list) {
+      const row = get.get(r.id);
+      if (!row) throw new HttpError(404, 'Venta no encontrada');
+      if (r.qty > row.quantity) throw new HttpError(400, `Cantidad inválida para ${row.perfume_name}`);
+      if (row.perfume_id) give.run(r.qty, row.perfume_id);
+      if (r.qty === row.quantity) db.prepare('DELETE FROM manual_sales WHERE id = ?').run(row.id);
+      else db.prepare('UPDATE manual_sales SET quantity = quantity - ? WHERE id = ?').run(r.qty, row.id);
     }
   });
   return { ok: true };
@@ -1464,7 +1537,7 @@ const server = http.createServer(async (req, res) => {
         req,
         query: url.searchParams,
         params: Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])])),
-        body: ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {},
+        body: ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {},
         user: getUser(req),
         setHeader: (k, v) => (extraHeaders[k] = v),
       };
