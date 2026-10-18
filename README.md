@@ -62,6 +62,8 @@ Cierra la ventana negra y dale doble clic a **`ACTUALIZAR.bat`** (Windows) o **`
 
 Dale doble clic a **`RESTABLECER-CLAVE.bat`** (Windows) o **`restablecer-clave.command`** (Mac). La contraseña vuelve a ser `admin123`; cámbiala al ingresar.
 
+**En la página publicada (Railway):** en la tarjeta del servicio → **Variables**, agrega `ADMIN_RESET_PASSWORD` con la contraseña nueva (mínimo 8 caracteres) y, si también quieres cambiar el usuario, `ADMIN_RESET_EMAIL`. Railway vuelve a desplegar solo; en los registros (logs) aparece "ACCESO DE ADMINISTRADOR RESTABLECIDO". Entra con esos datos y luego borra las variables. Se aplica una sola vez por cada valor, así que no pisa los cambios que hagas después.
+
 ## Requisitos
 
 - **Node.js 22.13 o superior**. No hace falta instalar dependencias: el proyecto usa solo módulos integrados de Node, entre ellos la base de datos SQLite (`node:sqlite`).

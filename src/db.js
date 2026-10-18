@@ -218,6 +218,42 @@ if (!db.prepare("SELECT id FROM users WHERE role = 'admin'").get()) {
   }
 }
 
+// Restablecer el acceso del administrador si olvidó la contraseña.
+// En Railway: agrega la variable ADMIN_RESET_PASSWORD (y si quieres ADMIN_RESET_EMAIL) y vuelve a desplegar.
+// Se aplica una sola vez por cada valor nuevo, así que dejarla puesta no pisa cambios posteriores.
+const resetPassword = process.env.ADMIN_RESET_PASSWORD;
+if (resetPassword) {
+  const admin = db.prepare("SELECT * FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+  const resetEmail = String(process.env.ADMIN_RESET_EMAIL || '').trim().toLowerCase();
+  const stamp = require('node:crypto').createHash('sha256').update(`${resetEmail}\n${resetPassword}`).digest('hex');
+  const done = db.prepare("SELECT value FROM settings WHERE key = 'admin_reset_applied'").get();
+  if (!admin) {
+    console.log('  ADMIN_RESET_PASSWORD: no hay cuenta de administrador.');
+  } else if (resetPassword.length < 8) {
+    console.log('  ADMIN_RESET_PASSWORD: la contraseña debe tener al menos 8 caracteres. No se cambió nada.');
+  } else if (resetEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail)) {
+    console.log('  ADMIN_RESET_EMAIL no es un correo válido. No se cambió nada.');
+  } else if (resetEmail && db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(resetEmail, admin.id)) {
+    console.log('  ADMIN_RESET_EMAIL ya lo usa otra cuenta. No se cambió nada.');
+  } else if (done?.value === stamp) {
+    console.log('  ADMIN_RESET_PASSWORD ya se aplicó antes. Puedes borrar esa variable en Railway.');
+  } else {
+    const email = resetEmail || admin.email;
+    db.prepare('UPDATE users SET email = ?, password_hash = ? WHERE id = ?').run(email, hashPassword(resetPassword), admin.id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(admin.id);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('admin_reset_applied', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(stamp);
+    console.log('');
+    console.log('  ============================================');
+    console.log('   ACCESO DE ADMINISTRADOR RESTABLECIDO');
+    console.log(`   Usuario: ${email}`);
+    console.log('   Contraseña: la que pusiste en ADMIN_RESET_PASSWORD');
+    console.log('   Se cerraron todas las sesiones del administrador.');
+    console.log('   Ahora borra la variable ADMIN_RESET_PASSWORD en Railway.');
+    console.log('  ============================================');
+    console.log('');
+  }
+}
+
 function transaction(fn) {
   db.exec('BEGIN');
   try {
