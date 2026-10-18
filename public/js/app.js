@@ -1079,17 +1079,23 @@ function confirmWithPassword({ title, message, button, action, extraHtml = '', c
 function returnModal({ title, lines, action }) {
   confirmWithPassword({
     title,
-    message: 'Pon cuántas unidades te devolvieron de cada perfume (0 si no devolvieron ese). Las unidades vuelven a tu stock.',
+    message: 'Escribe SOLO lo que te devolvieron. Lo demás se queda como vendido. Las unidades devueltas vuelven a tu stock.',
     button: 'Confirmar devolución',
     extraHtml: `
       <div class="return-lines">
         ${lines.map((l, i) => `
           <div class="return-line">
-            <div><strong>${esc(l.name)}</strong><div class="small muted">Vendidos: ${l.qty} · ${money(l.price)} c/u</div></div>
-            <input type="number" min="0" max="${l.qty}" step="1" value="${l.qty}" data-ret="${i}" aria-label="Unidades devueltas" ${i === 0 ? 'data-first' : ''}>
+            <div><strong>${esc(l.name)}</strong><div class="small muted">Vendidos: ${l.qty} · ${money(l.price)} c/u</div>
+              <div class="small" data-keep="${i}"></div></div>
+            <label class="return-qty"><span class="small muted">Devueltos</span>
+              <span class="return-stepper">
+                <button type="button" data-ret-step="-1" data-i="${i}" aria-label="Menos">−</button>
+                <input type="number" min="0" max="${l.qty}" step="1" value="0" data-ret="${i}" aria-label="Unidades devueltas" ${i === 0 ? 'data-first' : ''}>
+                <button type="button" data-ret-step="1" data-i="${i}" aria-label="Más">+</button>
+              </span></label>
           </div>`).join('')}
       </div>
-      <div class="return-total small">Se devuelve: <strong data-ret-total></strong></div>
+      <div class="return-total small">Se devuelve: <strong data-ret-total></strong><div class="muted" data-ret-keep></div></div>
       <div class="field"><label for="rt-note">Motivo (opcional)</label><input id="rt-note" maxlength="200" placeholder="Ej: no le gustó, venía dañado…"></div>`,
     collect: (form) => {
       const items = lines.map((l, i) => ({ id: l.id, quantity: Math.floor(Number($(`[data-ret="${i}"]`, form).value)) || 0 }))
@@ -1101,11 +1107,28 @@ function returnModal({ title, lines, action }) {
     action: (password, { items, note }) => action(items, password, note),
   });
   const form = $('#pwConfirm');
+  const qtyOf = (i, l) => Math.min(l.qty, Math.max(0, Math.floor(Number($(`[data-ret="${i}"]`, form).value)) || 0));
   const sum = () => {
-    const total = lines.reduce((n, l, i) => n + Math.min(l.qty, Math.max(0, Number($(`[data-ret="${i}"]`, form).value) || 0)) * l.price, 0);
-    $('[data-ret-total]', form).textContent = money(total);
+    let back = 0;
+    let kept = 0;
+    lines.forEach((l, i) => {
+      const r = qtyOf(i, l);
+      back += r * l.price;
+      kept += (l.qty - r) * l.price;
+      const el = $(`[data-keep="${i}"]`, form);
+      el.textContent = r ? `Se queda vendido: ${l.qty - r}` : '';
+      el.classList.toggle('return-on', r > 0);
+    });
+    $('[data-ret-total]', form).textContent = money(back);
+    $('[data-ret-keep]', form).textContent = `La venta queda en ${money(kept)}`;
   };
   $$('[data-ret]', form).forEach((i) => i.addEventListener('input', sum));
+  $$('[data-ret-step]', form).forEach((b) => b.addEventListener('click', () => {
+    const input = $(`[data-ret="${b.dataset.i}"]`, form);
+    const line = lines[Number(b.dataset.i)];
+    input.value = Math.min(line.qty, Math.max(0, (Number(input.value) || 0) + Number(b.dataset.retStep)));
+    sum();
+  }));
   sum();
 }
 
