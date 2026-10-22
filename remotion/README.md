@@ -46,7 +46,7 @@ Claude Code las carga automáticamente al abrir este proyecto, así que basta co
 
 ## Video de galería de perfumes (`PerfumeGallery`)
 
-Video vertical 4K (2160x3840) sobre fondo verde chroma puro (#00FF00). Muestra 3 tarjetas blancas
+Video vertical 4K (2160x3840) sobre fondo verde chroma puro (#00FF00). Muestra los 3 perfumes (sin fondo, a la misma altura)
 que se deslizan a la derecha: 2 s de movimiento lento, barrido rápido de 0.3 s con desenfoque de
 movimiento, y así sucesivamente. Dura 6.9 s y hace loop perfecto. El código está en `PerfumeGallery.jsx`.
 

@@ -31,6 +31,7 @@ export const calculateGalleryMetadata = async ({ props }) => {
   return { props: { ...props, perfumes } };
 };
 
+// Invisible box of fixed size: the bottle sits straight on the chroma green, centered at the same height.
 const Card = ({ perfume, width, height }) => {
   const Illustration = BOTTLE_ILLUSTRATIONS[perfume.id];
   const bottleHeight = height * 0.78;
@@ -40,8 +41,6 @@ const Card = ({ perfume, width, height }) => {
       style={{
         width,
         height,
-        borderRadius: width * 0.08,
-        backgroundColor: '#FFFFFF',
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
@@ -99,12 +98,27 @@ const Strip = ({ perfumes }) => {
   );
 };
 
+// Motion blur stacks semi-transparent copies, which bands smooth gradients like the chrome bottle.
+// Only apply it while the swipe is moving fast; the slow drift stays pixel-sharp.
+const useIsSwiping = () => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const local = (frame / fps) % CYCLE_SECONDS;
+  return local >= DRIFT_SECONDS - 1 / fps && local <= CYCLE_SECONDS - 1 / fps;
+};
+
 export const PerfumeGallery = ({ perfumes }) => {
+  const isSwiping = useIsSwiping();
+
   return (
     <AbsoluteFill style={{ backgroundColor: CHROMA_GREEN }}>
-      <CameraMotionBlur samples={32} shutterAngle={270}>
+      {isSwiping ? (
+        <CameraMotionBlur samples={32} shutterAngle={270}>
+          <Strip perfumes={perfumes} />
+        </CameraMotionBlur>
+      ) : (
         <Strip perfumes={perfumes} />
-      </CameraMotionBlur>
+      )}
     </AbsoluteFill>
   );
 };

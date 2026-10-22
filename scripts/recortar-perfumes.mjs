@@ -12,6 +12,10 @@ const OUT = 'remotion/public/perfumes';
 const WHITE = 232;
 // Pixels this close to the background edge fade out instead of cutting hard.
 const FEATHER = 2;
+// Photos with a see-through gap (like a handle) whose enclosed white area is background too.
+// Not applied to the rest, where enclosed white is part of the bottle (clear glass, highlights).
+const FILL_HOLES = ['armaf-odyssey-mandarinsky'];
+const MIN_HOLE_AREA = 0.002;
 
 const removeBackground = async (file) => {
   const { data, info } = await sharp(path.join(SRC, file)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -32,6 +36,28 @@ const removeBackground = async (file) => {
     if (x < width - 1) stack.push(i + 1);
     if (i >= width) stack.push(i - width);
     if (i < width * (height - 1)) stack.push(i + width);
+  }
+
+  if (FILL_HOLES.includes(path.parse(file).name)) {
+    const seen = new Uint8Array(width * height);
+    for (let start = 0; start < width * height; start++) {
+      if (seen[start] || background[start] || !isWhite(start)) continue;
+      const region = [];
+      const queue = [start];
+      seen[start] = 1;
+      while (queue.length) {
+        const i = queue.pop();
+        region.push(i);
+        const x = i % width;
+        for (const n of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i - width, i + width]) {
+          if (n >= 0 && n < width * height && !seen[n] && !background[n] && isWhite(n)) {
+            seen[n] = 1;
+            queue.push(n);
+          }
+        }
+      }
+      if (region.length >= MIN_HOLE_AREA * width * height) for (const i of region) background[i] = 1;
+    }
   }
 
   for (let i = 0; i < width * height; i++) {
