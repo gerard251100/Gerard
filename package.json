@@ -6,9 +6,17 @@
   "private": true,
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server.js",
-    "dev": "node --disable-warning=ExperimentalWarning --watch server.js"
+    "dev": "node --disable-warning=ExperimentalWarning --watch server.js",
+    "video:studio": "remotion studio remotion/index.jsx",
+    "video:render": "remotion render remotion/index.jsx Intro out/intro.mp4"
   },
   "engines": {
     "node": ">=22.13"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.538",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "remotion": "^4.0.538"
   }
 }
