@@ -14,9 +14,30 @@
     "node": ">=22.13"
   },
   "dependencies": {
-    "@remotion/cli": "^4.0.538",
+    "@remotion/animation-utils": "4.0.538",
+    "@remotion/captions": "4.0.538",
+    "@remotion/cli": "4.0.538",
+    "@remotion/fonts": "4.0.538",
+    "@remotion/gif": "4.0.538",
+    "@remotion/google-fonts": "4.0.538",
+    "@remotion/layout-utils": "4.0.538",
+    "@remotion/lottie": "4.0.538",
+    "@remotion/media": "4.0.538",
+    "@remotion/media-utils": "4.0.538",
+    "@remotion/motion-blur": "4.0.538",
+    "@remotion/noise": "4.0.538",
+    "@remotion/paths": "4.0.538",
+    "@remotion/player": "4.0.538",
+    "@remotion/shapes": "4.0.538",
+    "@remotion/transitions": "4.0.538",
+    "@remotion/zod-types": "4.0.538",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "remotion": "^4.0.538"
+    "remotion": "4.0.538",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2"
   }
 }
