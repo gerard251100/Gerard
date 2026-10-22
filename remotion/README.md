@@ -43,3 +43,23 @@ En `.claude/skills/` están las skills oficiales de Remotion (`remotion-best-pra
 `remotion-create`, `remotion-captions`, `remotion-multimedia`, `remotion-render`, etc.).
 Claude Code las carga automáticamente al abrir este proyecto, así que basta con pedirle
 "haz un video de..." y seguirá las buenas prácticas de Remotion.
+
+## Video de galería de perfumes (`PerfumeGallery`)
+
+Video vertical 4K (2160x3840) sobre fondo verde chroma puro (#00FF00). Muestra 3 tarjetas blancas
+que se deslizan a la derecha: 2 s de movimiento lento, barrido rápido de 0.3 s con desenfoque de
+movimiento, y así sucesivamente. Dura 6.9 s y hace loop perfecto. El código está en `PerfumeGallery.jsx`.
+
+### Poner las fotos reales
+
+1. Copia las fotos originales (fondo blanco) en `remotion/public/perfumes/originales/` con estos nombres:
+   - `rasasi-hawas-chrome.jpg`
+   - `armaf-dunescape.jpg`
+   - `armaf-odyssey-mandarinsky.jpg`
+2. Ejecuta `npm run video:recortar`. Quita el fondo blanco, recorta justo al frasco y guarda los PNG en `remotion/public/perfumes/`.
+3. Ejecuta `npm run video:perfumes`, que exporta `out/perfume-gallery.mp4`, o revísalo antes con `npm run video:studio`.
+
+Si falta alguna foto, el video usa un dibujo provisional del frasco.
+
+Para recortar el fondo verde con mejor calidad en el editor, exporta en ProRes:
+`npx remotion render PerfumeGallery out/perfume-gallery.mov --codec=prores --prores-profile=4444`

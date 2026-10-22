@@ -7,8 +7,10 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch server.js",
-    "video:studio": "remotion studio remotion/index.jsx",
-    "video:render": "remotion render remotion/index.jsx Intro out/intro.mp4"
+    "video:studio": "remotion studio",
+    "video:render": "remotion render Intro out/intro.mp4",
+    "video:perfumes": "remotion render PerfumeGallery out/perfume-gallery.mp4",
+    "video:recortar": "node scripts/recortar-perfumes.mjs"
   },
   "engines": {
     "node": ">=22.13"
@@ -38,6 +40,7 @@
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
+    "sharp": "^0.35.5",
     "typescript": "^7.0.2"
   }
 }
