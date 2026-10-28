@@ -1393,6 +1393,20 @@ async function adminVendors(body, _s, filter = '') {
   }));
 }
 
+// Búsqueda del catálogo del administrador (se conserva al guardar cambios).
+let catalogQuery = '';
+
+// Vuelve a cargar la tabla del catálogo sin moverse de donde estabas.
+async function reloadCatalog(flashId) {
+  const body = $('#tabBody');
+  if (state.tab.admin !== 'catalogo' || !body) return viewAdmin('catalogo');
+  const y = window.scrollY;
+  await adminPerfumes(body);
+  window.scrollTo(0, y);
+  const row = flashId && $(`[data-row-id="${flashId}"]`, body);
+  if (row) { row.classList.remove('row-flash'); void row.offsetWidth; row.classList.add('row-flash'); }
+}
+
 async function adminPerfumes(body) {
   const { perfumes } = await api('/api/admin/perfumes');
   body.innerHTML = `
@@ -1401,11 +1415,16 @@ async function adminPerfumes(body) {
       <button class="btn solid" id="newPerfume">+ Agregar perfume</button>
     </div>
     ${perfumes.length ? `
+      <div class="catalog-search">
+        <input type="search" id="catSearch" placeholder="Buscar por nombre, marca o categoría…" value="${esc(catalogQuery)}" aria-label="Buscar perfume">
+        <span class="small muted" id="catCount"></span>
+      </div>
+      <div class="empty" id="catNone" hidden>Ningún perfume coincide con la búsqueda.</div>
       <div class="table-wrap"><table class="stack">
         <thead><tr><th></th><th>Perfume</th><th>Categoría</th><th class="num">Precio</th><th class="num">Comisión</th><th class="num">Stock</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
         <tbody>
           ${perfumes.map((p) => `
-            <tr>
+            <tr data-row-id="${p.id}" data-search="${esc(`${p.name} ${p.brand || ''} ${p.category || ''}`.toLowerCase())}">
               <td class="cell-thumb">${p.image ? `<img class="thumb" src="${esc(p.image)}" alt="">` : '<div class="thumb"></div>'}</td>
               <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}</div>
                 <button type="button" class="best-toggle ${p.bestseller ? 'on' : ''}" data-best="${p.id}" title="Mostrar en «Los más vendidos» del inicio">${p.bestseller ? '★ Más vendido' : '☆ Marcar como más vendido'}</button></td>
@@ -1423,18 +1442,34 @@ async function adminPerfumes(body) {
       </table></div>`
       : '<div class="empty">Aún no hay perfumes. Agrega el primero para armar tu catálogo.</div>'}`;
   $('#newPerfume').addEventListener('click', () => perfumeForm());
+  // Buscador: filtra las filas mientras escribes.
+  const search = $('#catSearch', body);
+  const applySearch = () => {
+    catalogQuery = search.value;
+    const words = catalogQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0;
+    $$('[data-row-id]', body).forEach((tr) => {
+      const ok = words.every((w) => tr.dataset.search.includes(w));
+      tr.hidden = !ok;
+      if (ok) shown++;
+    });
+    $('#catCount', body).textContent = words.length ? `${shown} de ${perfumes.length}` : `${perfumes.length} perfumes`;
+    $('#catNone', body).hidden = shown > 0;
+    $('.table-wrap', body).hidden = shown === 0;
+  };
+  if (search) { search.addEventListener('input', applySearch); applySearch(); }
   $$('[data-best]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, async () => {
     const on = !b.classList.contains('on');
     await api(`/api/admin/perfumes/${b.dataset.best}/bestseller`, { method: 'PATCH', body: { bestseller: on } });
     toast(on ? 'Agregado a «Los más vendidos»' : 'Quitado de «Los más vendidos»');
-    adminPerfumes(body);
+    reloadCatalog(b.dataset.best);
   })));
   // Botones − / + del inventario y edición directa del número.
   $$('[data-stock-id]', body).forEach((box) => {
     const id = box.dataset.stockId;
     const save = (payload, btn) => withBusy(btn, async () => {
       await api(`/api/admin/perfumes/${id}/stock`, { method: 'PATCH', body: payload });
-      adminPerfumes(body);
+      reloadCatalog(id);
     });
     $$('[data-stock-add]', box).forEach((b) => b.addEventListener('click', () => save({ add: Number(b.dataset.stockAdd) }, b)));
     $('input', box).addEventListener('change', (e) => save({ stock: e.target.value }, null));
@@ -1445,7 +1480,7 @@ async function adminPerfumes(body) {
     withBusy(b, async () => {
       await api(`/api/admin/perfumes/${b.dataset.del}`, { method: 'DELETE' });
       toast('Perfume eliminado');
-      viewAdmin('catalogo');
+      reloadCatalog();
     });
   }));
 }
@@ -1774,10 +1809,10 @@ function perfumeForm(p = {}) {
     data.active = e.target.active.checked;
     data.bestseller = e.target.bestseller.checked;
     withBusy(e.submitter, async () => {
-      await api(editing ? `/api/admin/perfumes/${p.id}` : '/api/admin/perfumes', { method: editing ? 'PUT' : 'POST', body: data });
+      const { perfume } = await api(editing ? `/api/admin/perfumes/${p.id}` : '/api/admin/perfumes', { method: editing ? 'PUT' : 'POST', body: data });
       closeModal();
       toast(editing ? 'Perfume actualizado' : 'Perfume agregado');
-      viewAdmin('catalogo');
+      reloadCatalog(perfume.id);
     });
   });
 }

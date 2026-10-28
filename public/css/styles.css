@@ -911,3 +911,16 @@ body.soon-mode .wa-float { bottom: 22px; }
 .return-stepper button:hover { background: var(--glass-hover); }
 .return-stepper input { width: 3.2rem; border: none; border-left: 1px solid var(--line-soft); border-right: 1px solid var(--line-soft); border-radius: 0; text-align: center; padding: 0.45rem 0.2rem; }
 .return-on { color: var(--ok); }
+
+/* ---- Buscador del catálogo (administrador) ---- */
+.catalog-search { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.catalog-search input { flex: 1; max-width: 420px; border-radius: 999px; padding-left: 1.2rem; }
+.catalog-search .small { white-space: nowrap; }
+tr[hidden], .table-wrap[hidden] { display: none; }
+@keyframes rowFlash { from { background: rgba(255, 255, 255, 0.18); } to { background: transparent; } }
+.row-flash td { animation: rowFlash 1.6s ease; }
+@media (max-width: 720px) {
+  .catalog-search { flex-direction: column; align-items: stretch; gap: 0.4rem; }
+  .catalog-search input { max-width: none; }
+  .row-flash { animation: rowFlash 1.6s ease; }
+}
