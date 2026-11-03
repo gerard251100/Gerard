@@ -339,7 +339,7 @@ async function viewHome() {
       <div class="bf-hero-content">
         <div class="bf-kicker"><span class="bf-pill">Solo por tiempo limitado</span></div>
         <h1 class="bf-title"><span class="bf-word">BLACK</span><span class="bf-word outline">FRIDAY</span></h1>
-        <div class="bf-sub">en <strong>Distinto SCZ</strong> · <span id="bfMax">perfumes originales con descuento</span></div>
+        <div class="bf-sub">en <strong>Distinto SCZ</strong> · descuentos especiales en perfumes originales</div>
         ${countdownHTML(bfEnd(), `La oferta termina el ${fmtEnd(bfEnd())}`)}
         <div class="hero-actions">
           <a class="btn solid bf-cta" href="#/catalogo?ofertas">Ver ofertas</a>
@@ -406,8 +406,6 @@ async function viewHome() {
   if (deals.length) {
     $('#deals').hidden = false;
     $('#dealsGrid').innerHTML = `<div class="grid best-grid">${deals.slice(0, 8).map((p) => productCard(p, { mode })).join('')}</div>`;
-    const max = Math.max(...deals.map((p) => p.discount_pct));
-    if ($('#bfMax')) $('#bfMax').innerHTML = `hasta <strong class="bf-red">-${fmtPct(max)}%</strong> en perfumes originales`;
   }
   const best = perfumes.filter((p) => p.bestseller);
   if (best.length) {
