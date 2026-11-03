@@ -295,24 +295,40 @@ route('POST', '/api/me/logout-all', async (ctx) => {
 
 // ---- Catálogo
 
-// Precio final con el descuento (%) del perfume.
+// Precio final con el descuento en Bs del perfume.
 function finalPrice(p) {
-  const pct = Math.min(90, Math.max(0, Number(p.discount_pct) || 0));
-  return Math.round(p.suggested_price * (100 - pct)) / 100;
+  const off = Math.min(Number(p.suggested_price) || 0, Math.max(0, Number(p.discount_bs) || 0));
+  return Math.round((p.suggested_price - off) * 100) / 100;
+}
+// Porcentaje que representa el descuento (para la etiqueta del catálogo).
+function discountPct(p) {
+  const off = Number(p.discount_bs) || 0;
+  if (off <= 0 || !(p.suggested_price > 0)) return 0;
+  return Math.max(1, Math.round((off / p.suggested_price) * 100));
 }
 
 // El stock exacto solo lo ve el administrador; al público solo se le dice si está agotado.
-const PUBLIC_FIELDS = 'id, name, brand, category, size_ml, description, image, bestseller, (stock IS NOT NULL AND stock <= 0) AS sold_out';
+const PUBLIC_FIELDS = `id, name, brand, category, size_ml, description, image, bestseller,
+  CASE availability WHEN 'soldout' THEN 1 WHEN 'available' THEN 0 ELSE (stock IS NOT NULL AND stock <= 0) END AS sold_out`;
+const AVAILABILITY = ['auto', 'available', 'soldout'];
+
+// ¿Hay unidades para vender? "Disponible" permite pedir aunque falte stock; "Agotado" nunca.
+function canSell(p, qty) {
+  if (p.availability === 'soldout') return false;
+  if (p.availability === 'available') return true;
+  return p.stock == null || p.stock >= qty;
+}
 
 route('GET', '/api/catalog', async () => ({
   perfumes: db
-    .prepare(`SELECT ${PUBLIC_FIELDS}, suggested_price, discount_pct FROM perfumes WHERE active = 1 ORDER BY brand, name`)
+    .prepare(`SELECT ${PUBLIC_FIELDS}, suggested_price, discount_bs FROM perfumes WHERE active = 1 ORDER BY brand, name`)
     .all()
-    .map(({ suggested_price, discount_pct, ...p }) => ({
+    .map(({ suggested_price, discount_bs, ...p }) => ({
       ...p,
-      price: finalPrice({ suggested_price, discount_pct }),
+      price: finalPrice({ suggested_price, discount_bs }),
       list_price: suggested_price,
-      discount_pct: discount_pct > 0 ? discount_pct : 0,
+      discount_bs: discount_bs > 0 ? discount_bs : 0,
+      discount_pct: discountPct({ suggested_price, discount_bs }),
     })),
 }));
 
@@ -320,10 +336,10 @@ route('GET', '/api/catalog', async () => ({
 route('POST', '/api/catalog/check', async (ctx) => {
   const id = Number(ctx.body.perfume_id);
   const qty = Math.floor(Number(ctx.body.quantity));
-  const p = db.prepare('SELECT name, stock FROM perfumes WHERE id = ? AND active = 1').get(id);
+  const p = db.prepare('SELECT name, stock, availability FROM perfumes WHERE id = ? AND active = 1').get(id);
   if (!p) return { ok: false, message: 'Este perfume ya no está disponible' };
   if (!Number.isFinite(qty) || qty < 1) return { ok: false, message: 'Cantidad inválida' };
-  if (p.stock != null && p.stock < qty) return { ok: false, message: noStock(p.name) };
+  if (!canSell(p, qty)) return { ok: false, message: noStock(p.name) };
   return { ok: true };
 });
 
@@ -357,12 +373,13 @@ const noStock = (name) => `Ya no quedan existencias de ${name}`;
 
 function takeStock(orderId) {
   const items = db.prepare('SELECT perfume_id, perfume_name, SUM(quantity) AS qty FROM order_items WHERE order_id = ? GROUP BY perfume_id').all(orderId);
-  const getStock = db.prepare('SELECT stock FROM perfumes WHERE id = ?');
+  const getStock = db.prepare('SELECT stock, availability FROM perfumes WHERE id = ?');
   const take = db.prepare('UPDATE perfumes SET stock = stock - ? WHERE id = ? AND stock IS NOT NULL');
   for (const it of items) {
     const row = it.perfume_id && getStock.get(it.perfume_id);
     if (!row || row.stock == null) continue;
-    if (row.stock < it.qty) {
+    // "Disponible" (por llegar): se descuenta igual y el stock puede quedar en negativo hasta que llegue la mercadería.
+    if (row.availability !== 'available' && row.stock < it.qty) {
       throw new HttpError(409, noStock(it.perfume_name));
     }
     take.run(it.qty, it.perfume_id);
@@ -422,9 +439,7 @@ function createOrder(b, vendor) {
     if (!Number.isFinite(qty) || qty < 1 || qty > 999) throw new HttpError(400, 'Cantidad inválida');
     const p = getPerfume.get(Number(it.perfume_id));
     if (!p) throw new HttpError(400, 'Uno de los perfumes ya no está disponible');
-    if (p.stock != null && p.stock < qty) {
-      throw new HttpError(409, noStock(p.name));
-    }
+    if (!canSell(p, qty)) throw new HttpError(409, noStock(p.name));
     return { p, qty, commission: vendor ? p.commission : 0 };
   });
 
@@ -998,16 +1013,18 @@ function perfumeFields(b) {
     b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
     stockValue(b.stock),
     costValue(b.cost),
-    discountValue(b.discount_pct),
+    discountValue(b.discount_bs, money(b.suggested_price)),
     b.bestseller === true || b.bestseller === 1 || b.bestseller === '1' || b.bestseller === 'on' ? 1 : 0,
+    AVAILABILITY.includes(b.availability) ? b.availability : 'auto',
   ];
 }
 
-// Descuento en porcentaje (0 a 90).
-function discountValue(value) {
+// Descuento en Bs: de 0 hasta menos que el precio de venta.
+function discountValue(value, price) {
   if (value === '' || value == null) return 0;
   const n = Math.round(Number(value) * 100) / 100;
-  if (!Number.isFinite(n) || n < 0 || n > 90) throw new HttpError(400, 'El descuento debe ser un porcentaje entre 0 y 90');
+  if (!Number.isFinite(n) || n < 0) throw new HttpError(400, 'El descuento debe ser un monto en Bs (0 o más)');
+  if (n > 0 && n >= price) throw new HttpError(400, 'El descuento debe ser menor que el precio de venta');
   return n;
 }
 
@@ -1034,8 +1051,8 @@ route('POST', '/api/admin/perfumes', async (ctx) => {
   requireAdmin(ctx);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, cost, discount_pct, bestseller)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, cost, discount_bs, bestseller, availability)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(...perfumeFields(ctx.body));
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(lastInsertRowid) };
@@ -1047,7 +1064,7 @@ route('PUT', '/api/admin/perfumes/:id', async (ctx) => {
   const { changes } = db
     .prepare(
       `UPDATE perfumes SET name = ?, brand = ?, category = ?, size_ml = ?, description = ?, image = ?,
-              suggested_price = ?, commission = ?, active = ?, stock = ?, cost = ?, discount_pct = ?, bestseller = ? WHERE id = ?`
+              suggested_price = ?, commission = ?, active = ?, stock = ?, cost = ?, discount_bs = ?, bestseller = ?, availability = ? WHERE id = ?`
     )
     .run(...perfumeFields(ctx.body), id);
   if (!changes) throw new HttpError(404, 'Perfume no encontrado');
@@ -1064,7 +1081,8 @@ route('PATCH', '/api/admin/perfumes/:id/stock', async (ctx) => {
   if ('add' in ctx.body) {
     const add = Math.trunc(Number(ctx.body.add));
     if (!Number.isFinite(add)) throw new HttpError(400, 'Cantidad inválida');
-    stock = Math.max(0, (p.stock || 0) + add);
+    // Si hay unidades vendidas por adelantado (stock negativo), sumar las cubre primero.
+    stock = (p.stock || 0) < 0 ? p.stock + add : Math.max(0, (p.stock || 0) + add);
   } else {
     stock = stockValue(ctx.body.stock);
   }
@@ -1072,11 +1090,21 @@ route('PATCH', '/api/admin/perfumes/:id/stock', async (ctx) => {
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
 });
 
+route('PATCH', '/api/admin/perfumes/:id/availability', async (ctx) => {
+  requireAdmin(ctx);
+  const id = Number(ctx.params.id);
+  const value = AVAILABILITY.includes(ctx.body.availability) ? ctx.body.availability : 'auto';
+  const { changes } = db.prepare('UPDATE perfumes SET availability = ? WHERE id = ?').run(value, id);
+  if (!changes) throw new HttpError(404, 'Perfume no encontrado');
+  return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
+});
+
 route('PATCH', '/api/admin/perfumes/:id/discount', async (ctx) => {
   requireAdmin(ctx);
   const id = Number(ctx.params.id);
-  const { changes } = db.prepare('UPDATE perfumes SET discount_pct = ? WHERE id = ?').run(discountValue(ctx.body.discount_pct), id);
-  if (!changes) throw new HttpError(404, 'Perfume no encontrado');
+  const p = db.prepare('SELECT suggested_price FROM perfumes WHERE id = ?').get(id);
+  if (!p) throw new HttpError(404, 'Perfume no encontrado');
+  db.prepare('UPDATE perfumes SET discount_bs = ? WHERE id = ?').run(discountValue(ctx.body.discount_bs, p.suggested_price), id);
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
 });
 

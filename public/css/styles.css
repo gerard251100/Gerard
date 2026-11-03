@@ -1043,3 +1043,59 @@ body.bf-mode .badge.count, body.bf-mode .tab-badge { background: var(--bf); colo
   .bf-stamp { right: -10%; font-size: 0.62rem; padding: 0.4rem 0.7rem; }
 }
 .bf-sub strong.bf-red { color: var(--bf); }
+
+/* ---- Black Friday en toda la tienda (sobre el negro y blanco de siempre) ---- */
+.bf-strip {
+  position: relative; overflow: hidden; display: flex; align-items: center; gap: 1.2rem; flex-wrap: wrap;
+  margin-bottom: 1.6rem; padding: 0.9rem 1.2rem; border: 1px solid var(--bf); border-radius: 18px;
+  background: linear-gradient(110deg, rgba(255, 43, 67, 0.22), rgba(0, 0, 0, 0.9) 45%, rgba(255, 43, 67, 0.14));
+  color: #fff; box-shadow: 0 10px 40px rgba(255, 43, 67, 0.18);
+}
+.bf-strip::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 40%; left: -40%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
+  animation: shine 4s ease-in-out infinite;
+}
+.bf-strip-title { font-family: 'Inter', var(--sans); font-weight: 800; font-size: 1.15rem; letter-spacing: 0.04em; color: var(--bf); white-space: nowrap; }
+.bf-strip-title b { color: #fff; }
+.bf-strip-msg { flex: 1; min-width: 200px; font-size: 0.9rem; color: #ddd; }
+.bf-strip-left { font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #ccc; white-space: nowrap; }
+.bf-strip-left strong { color: #fff; background: var(--bf); padding: 0.25rem 0.6rem; border-radius: 999px; margin-left: 0.3rem; letter-spacing: 0.06em; }
+.bf-savings { color: var(--bf); font-weight: 600; }
+
+body.bf-mode {
+  background:
+    radial-gradient(1200px 500px at 50% -180px, rgba(255, 43, 67, 0.16), transparent 70%),
+    radial-gradient(800px 600px at 110% 40%, rgba(255, 43, 67, 0.05), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+}
+body.bf-mode .topbar { border-bottom-color: rgba(255, 43, 67, 0.55); box-shadow: 0 1px 0 rgba(255, 43, 67, 0.25), 0 8px 30px rgba(255, 43, 67, 0.08); }
+body.bf-mode .brand-emblem { box-shadow: 0 0 0 1px rgba(255, 43, 67, 0.6), 0 0 18px rgba(255, 43, 67, 0.35); border-radius: 50%; }
+body.bf-mode .nav a.active { border-color: var(--bf); box-shadow: 0 0 18px rgba(255, 43, 67, 0.25); }
+body.bf-mode .section-head { border-image: linear-gradient(90deg, #fff 0%, #fff 55%, var(--bf) 100%) 1; }
+body.bf-mode .product { transition: background 0.25s, box-shadow 0.3s; }
+body.bf-mode .product:hover { box-shadow: inset 0 0 0 1px var(--bf), 0 0 34px rgba(255, 43, 67, 0.18); }
+body.bf-mode .product.on-sale .product-img { background: radial-gradient(circle at 50% 120%, rgba(255, 43, 67, 0.22), #050505 65%); }
+body.bf-mode .btn.solid:hover { box-shadow: inset 0 1px 0 #fff, 0 0 30px rgba(255, 43, 67, 0.45); }
+body.bf-mode .cart-total.big span:last-child { color: #fff; text-shadow: 0 0 18px rgba(255, 43, 67, 0.5); }
+body.bf-mode .tab-item.active { color: #fff; }
+body.bf-mode .tab-item.active::before { background: var(--bf) !important; box-shadow: 0 0 12px var(--bf); }
+body.bf-mode .tabbar { border-top-color: rgba(255, 43, 67, 0.6); }
+body.bf-mode .marquee { border-color: rgba(255, 43, 67, 0.6); }
+body.bf-mode .feature .num { color: var(--bf); }
+body.bf-mode .footer .line { background: linear-gradient(90deg, transparent, var(--bf), transparent); }
+body.bf-mode .footer-tag::after { content: ' · Black Friday'; color: var(--bf); }
+body.bf-mode .intro { background: radial-gradient(circle at 50% 50%, rgba(255, 43, 67, 0.2), #000 60%); }
+body.bf-mode .chip.active:not(.chip-deal) { box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(255, 43, 67, 0.5); }
+body.bf-mode .pay-card { border-color: rgba(255, 43, 67, 0.6); }
+@media (max-width: 720px) {
+  .bf-strip { gap: 0.4rem 0.8rem; padding: 0.8rem 1rem; border-radius: 16px; }
+  .bf-strip-msg { flex-basis: 100%; order: 3; font-size: 0.82rem; }
+}
+@media (prefers-reduced-motion: reduce) { .bf-strip::after { animation: none; } }
+
+/* Disponibilidad en la tabla del administrador */
+.avail-select { display: block; width: auto; margin: 0.4rem 0 0 auto; padding: 0.3rem 0.5rem; font-size: 0.72rem; border-radius: 999px; }
+.avail-select.avail-available { border-color: var(--ok); color: var(--ok); }
+.avail-select.avail-soldout { border-color: var(--bad); color: var(--bad); }

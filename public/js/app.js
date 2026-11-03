@@ -419,6 +419,8 @@ async function viewHome() {
 
 // 20 -> "20", 12.5 -> "12,5"
 const fmtPct = (n) => String(Math.round(Number(n) * 10) / 10).replace('.', ',');
+// Porcentaje entero que representa un descuento en Bs (mínimo 1%).
+const pctOff = (off, price) => (off > 0 && price > 0 ? Math.max(1, Math.round((off / price) * 100)) : 0);
 
 // Etiqueta y precio con descuento de una tarjeta de perfume.
 function discountBadge(p) {
@@ -594,7 +596,7 @@ function productGrid(list, mode, { grouped } = {}) {
 }
 
 async function viewCatalog() {
-  app.innerHTML = '<div class="section-head"><div><div class="eyebrow">Colección</div><h2>Catálogo</h2></div></div><div id="catalog"></div>';
+  app.innerHTML = `${bfStrip('Descuentos especiales en perfumes originales · toca <u>Black Friday</u> para ver solo las ofertas')}<div class="section-head"><div><div class="eyebrow">Colección</div><h2>Catálogo</h2></div></div><div id="catalog"></div>`;
   const { perfumes } = await api('/api/catalog');
   const root = $('#catalog');
   if (!perfumes.length) {
@@ -746,6 +748,7 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
     if (stale.length) { stale.forEach((id) => delete items[id]); cart.write(items); }
     const lines = Object.entries(items).map(([id, qty]) => ({ p: byId[id], qty }));
     const total = lines.reduce((sum, l) => sum + price(l.p) * l.qty, 0);
+    const savings = lines.reduce((sum, l) => sum + (l.p.list_price > price(l.p) ? (l.p.list_price - price(l.p)) * l.qty : 0), 0);
     const totalCommission = commission ? lines.reduce((sum, l) => sum + commission(l.p) * l.qty, 0) : 0;
     const tab = state.user?.role === 'vendor' && $$('.tab')[1];
     if (tab) tab.textContent = `Carrito${cart.count() ? ` (${cart.count()})` : ''}`;
@@ -774,6 +777,7 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
             </div>`).join('')}
           <div style="margin-top:1rem">
             ${commission ? `<div class="cart-total"><span class="muted">Comisión total</span><span style="color:var(--gold)">${money(totalCommission)}</span></div>` : ''}
+            ${savings > 0 ? `<div class="cart-total bf-savings"><span>${bfActive() ? 'Ahorras con Black Friday' : 'Ahorras'}</span><span>−${money(savings)}</span></div>` : ''}
             <div class="cart-total big"><span>Total</span><span>${money(total)}</span></div>
           </div>
         </div>
@@ -824,7 +828,7 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
    ================================================================= */
 async function viewShopCart() {
   if (state.user?.role === 'vendor') { location.hash = '#/panel/carrito'; return; }
-  app.innerHTML = '<div class="section-head"><div><div class="eyebrow">Tu compra</div><h2>Carrito</h2></div></div><div id="cartBody"></div>';
+  app.innerHTML = `${bfStrip('Tus descuentos ya están aplicados en el carrito')}<div class="section-head"><div><div class="eyebrow">Tu compra</div><h2>Carrito</h2></div></div><div id="cartBody"></div>`;
   const { perfumes } = await api('/api/catalog');
   renderCart($('#cartBody'), {
     perfumes,
@@ -895,6 +899,7 @@ async function viewTrack(token) {
   }
 
   app.innerHTML = `
+    ${bfStrip('Gracias por comprar en Black Friday · mira más ofertas')}
     <div class="section-head">
       <div>
         <div class="eyebrow">Pedido #${order.id} · ${fmtDate(order.created_at)}</div>
@@ -941,7 +946,7 @@ async function viewTrack(token) {
 }
 
 async function viewMyOrders() {
-  app.innerHTML = '<div class="section-head"><div><div class="eyebrow">Tus compras</div><h2>Mis pedidos</h2></div></div><div id="myOrders"></div>';
+  app.innerHTML = `${bfStrip('¿Te falta algo? Aprovecha las ofertas antes de que terminen')}<div class="section-head"><div><div class="eyebrow">Tus compras</div><h2>Mis pedidos</h2></div></div><div id="myOrders"></div>`;
   const saved = myOrders.read();
   const results = await Promise.all(saved.map((o) => api(`/api/public/orders/${o.token}`).then((r) => r.order).catch(() => null)));
   const orders = results.filter(Boolean);
@@ -1253,9 +1258,14 @@ async function adminPerfumes(body) {
                 <button type="button" class="best-toggle ${p.bestseller ? 'on' : ''}" data-best="${p.id}" title="Mostrar en «Los más vendidos» del inicio">${p.bestseller ? '★ Más vendido' : '☆ Marcar como más vendido'}</button></td>
               <td class="muted" data-label="Categoría">${esc(p.category || '—')}</td>
               <td class="num" data-label="Precio">${money(p.suggested_price)}</td>
-              <td class="num" data-label="Descuento"><div class="disc-ctl"><input type="number" min="0" max="90" step="0.5" value="${p.discount_pct > 0 ? p.discount_pct : ''}" placeholder="0" data-disc="${p.id}" aria-label="Descuento en %"><span>%</span></div>
-                ${p.discount_pct > 0 ? `<div class="small bf-red">${money(Math.round(p.suggested_price * (100 - p.discount_pct)) / 100)}</div>` : ''}</td>
-              <td class="num" data-label="Stock">${stockControl(p)}</td>
+              <td class="num" data-label="Descuento (Bs)"><div class="disc-ctl"><span>Bs</span><input type="number" min="0" step="0.01" value="${p.discount_bs > 0 ? p.discount_bs : ''}" placeholder="0" data-disc="${p.id}" aria-label="Descuento en Bs"></div>
+                ${p.discount_bs > 0 ? `<div class="small bf-red">${money(p.suggested_price - p.discount_bs)} · -${pctOff(p.discount_bs, p.suggested_price)}%</div>` : ''}</td>
+              <td class="num" data-label="Stock">${stockControl(p)}
+                <select class="avail-select avail-${esc(p.availability || 'auto')}" data-avail="${p.id}" aria-label="Disponibilidad">
+                  <option value="auto" ${(p.availability || 'auto') === 'auto' ? 'selected' : ''}>Según stock</option>
+                  <option value="available" ${p.availability === 'available' ? 'selected' : ''}>Disponible (por llegar)</option>
+                  <option value="soldout" ${p.availability === 'soldout' ? 'selected' : ''}>Agotado</option>
+                </select></td>
               <td data-label="Estado">${p.active ? '<span class="badge approved">Publicado</span>' : '<span class="badge">Oculto</span>'}</td>
               <td class="num cell-actions"><div class="btn-row" style="justify-content:flex-end">
                 <button class="btn sm" data-edit="${p.id}">Editar</button>
@@ -1288,10 +1298,16 @@ async function adminPerfumes(body) {
     toast(on ? 'Agregado a «Los más vendidos»' : 'Quitado de «Los más vendidos»');
     reloadCatalog(b.dataset.best);
   })));
+  // Disponibilidad directa desde la tabla.
+  $$('[data-avail]', body).forEach((sel) => sel.addEventListener('change', () => withBusy(null, async () => {
+    await api(`/api/admin/perfumes/${sel.dataset.avail}/availability`, { method: 'PATCH', body: { availability: sel.value } });
+    toast({ auto: 'Disponibilidad según stock', available: 'Marcado como disponible', soldout: 'Marcado como agotado' }[sel.value]);
+    reloadCatalog(sel.dataset.avail);
+  })));
   // Descuento directo desde la tabla.
   $$('[data-disc]', body).forEach((input) => input.addEventListener('change', () => withBusy(null, async () => {
-    await api(`/api/admin/perfumes/${input.dataset.disc}/discount`, { method: 'PATCH', body: { discount_pct: input.value } });
-    toast(Number(input.value) > 0 ? `Descuento de ${fmtPct(input.value)}% aplicado` : 'Descuento quitado');
+    await api(`/api/admin/perfumes/${input.dataset.disc}/discount`, { method: 'PATCH', body: { discount_bs: input.value } });
+    toast(Number(input.value) > 0 ? `Descuento de ${money(input.value)} aplicado` : 'Descuento quitado');
     reloadCatalog(input.dataset.disc);
   })));
   // Botones − / + del inventario y edición directa del número.
@@ -1596,7 +1612,7 @@ function perfumeForm(p = {}) {
         </div>
         <div class="field"><label for="p-size">Tamaño (ml)</label><input id="p-size" name="size_ml" type="number" min="1" value="${esc(p.size_ml || '')}"></div>
         <div class="field"><label for="p-price">Precio de venta (Bs) *</label><input id="p-price" name="suggested_price" type="number" min="0" step="0.01" required value="${esc(p.suggested_price ?? '')}"></div>
-        <div class="field"><label for="p-disc">Descuento (%)</label><input id="p-disc" name="discount_pct" type="number" min="0" max="90" step="0.5" value="${p.discount_pct > 0 ? esc(p.discount_pct) : ''}" placeholder="Ej: 20">
+        <div class="field"><label for="p-disc">Descuento (Bs)</label><input id="p-disc" name="discount_bs" type="number" min="0" step="0.01" value="${p.discount_bs > 0 ? esc(p.discount_bs) : ''}" placeholder="Ej: 50">
           <span class="small muted" id="p-final"></span></div>
         <input type="hidden" name="commission" value="${esc(p.commission ?? 0)}">
         <div class="field"><label for="p-cost">Precio de compra (Bs)</label><input id="p-cost" name="cost" type="number" min="0" step="0.01" value="${esc(p.cost ?? '')}" placeholder="Solo lo ves tú"></div>
@@ -1611,6 +1627,12 @@ function perfumeForm(p = {}) {
         </div>
         <label class="checkbox field full"><input type="checkbox" name="active" ${p.active === 0 ? '' : 'checked'}> Publicado (visible en el catálogo)</label>
         <label class="checkbox field full"><input type="checkbox" name="bestseller" ${p.bestseller ? 'checked' : ''}> ★ Mostrar en «Los más vendidos» del inicio</label>
+        <div class="field full"><label for="p-avail">Disponibilidad</label>
+          <select id="p-avail" name="availability">
+            <option value="auto" ${(p.availability || 'auto') === 'auto' ? 'selected' : ''}>Según stock (se agota sola al llegar a 0)</option>
+            <option value="available" ${p.availability === 'available' ? 'selected' : ''}>Disponible aunque no haya stock (por llegar)</option>
+            <option value="soldout" ${p.availability === 'soldout' ? 'selected' : ''}>Agotado (no se puede pedir)</option>
+          </select></div>
       </div>
       <div class="btn-row">
         <button class="btn solid" type="submit">${editing ? 'Guardar cambios' : 'Agregar perfume'}</button>
@@ -1621,10 +1643,12 @@ function perfumeForm(p = {}) {
   // Vista previa del precio con descuento.
   const showFinal = () => {
     const price = Number($('#p-price', root).value) || 0;
-    const pct = Math.min(90, Math.max(0, Number($('#p-disc', root).value) || 0));
-    $('#p-final', root).innerHTML = pct && price
-      ? `Precio con descuento: <strong class="bf-red">${money(Math.round(price * (100 - pct)) / 100)}</strong> · se verá la etiqueta roja en el catálogo`
-      : 'Déjalo vacío o en 0 si no tiene descuento.';
+    const off = Math.max(0, Number($('#p-disc', root).value) || 0);
+    $('#p-final', root).innerHTML = !off || !price
+      ? 'Monto que se resta al precio. Déjalo vacío o en 0 si no tiene descuento.'
+      : off >= price
+        ? '<span class="bf-red">El descuento debe ser menor que el precio.</span>'
+        : `Precio final: <strong class="bf-red">${money(price - off)}</strong> · en el catálogo sale la etiqueta <strong class="bf-red">-${pctOff(off, price)}%</strong>`;
   };
   $('#p-price', root).addEventListener('input', showFinal);
   $('#p-disc', root).addEventListener('input', showFinal);
@@ -2150,6 +2174,28 @@ function applyBlackFriday() {
   const item = '<span>BLACK FRIDAY</span><span class="dot">✦</span><span>Descuentos en perfumes originales</span><span class="dot">✦</span><span>Paga con QR</span><span class="dot">✦</span><span>Envíos a toda Bolivia</span><span class="dot">✦</span>';
   bar.innerHTML = `<a href="#/catalogo?ofertas" class="bf-bar-track">${item.repeat(4)}</a>`;
 }
+
+// Franja Black Friday para las demás páginas (catálogo, carrito, pedidos).
+function bfStrip(message) {
+  if (!bfActive()) return '';
+  return `
+    <a class="bf-strip" href="#/catalogo?ofertas">
+      <span class="bf-strip-title"><b>BLACK</b> FRIDAY</span>
+      <span class="bf-strip-msg">${message}</span>
+      <span class="bf-strip-left">Termina en <strong data-bf-left>${bfLeftText()}</strong></span>
+    </a>`;
+}
+function bfLeftText() {
+  const sec = Math.max(0, Math.floor((bfEnd() - Date.now()) / 1000));
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor(sec / 3600) % 24;
+  const m = Math.floor(sec / 60) % 60;
+  return d ? `${d}d ${h}h ${m}m` : `${h}h ${m}m`;
+}
+setInterval(() => {
+  $$('[data-bf-left]').forEach((el) => { el.textContent = bfLeftText(); });
+  if (document.body.classList.contains('bf-mode') && !bfActive()) applyBlackFriday();
+}, 30000);
 
 /* ---- Cuenta regresiva ---- */
 let countdownTimer = null;

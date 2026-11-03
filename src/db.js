@@ -185,6 +185,16 @@ db.exec(`
 if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'discount_pct')) {
   db.exec('ALTER TABLE perfumes ADD COLUMN discount_pct REAL NOT NULL DEFAULT 0');
 }
+// Disponibilidad: 'auto' (según stock), 'available' (se puede pedir aunque no haya stock, p. ej. por llegar)
+// o 'soldout' (agotado aunque tenga stock).
+if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'availability')) {
+  db.exec("ALTER TABLE perfumes ADD COLUMN availability TEXT NOT NULL DEFAULT 'auto'");
+}
+// Descuento en Bs por perfume (el porcentaje se calcula para la etiqueta). Los descuentos en % anteriores se pasan a Bs.
+if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'discount_bs')) {
+  db.exec('ALTER TABLE perfumes ADD COLUMN discount_bs REAL NOT NULL DEFAULT 0');
+  db.exec('UPDATE perfumes SET discount_bs = ROUND(suggested_price * discount_pct / 100, 2), discount_pct = 0 WHERE discount_pct > 0');
+}
 // La tienda ya no trabaja con vendedores: sus pedidos se conservan (con el nombre guardado) y las cuentas se eliminan.
 if (!db.prepare('PRAGMA table_info(orders)').all().some((c) => c.name === 'legacy_vendor')) {
   db.exec('ALTER TABLE orders ADD COLUMN legacy_vendor TEXT');
