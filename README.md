@@ -1,29 +1,22 @@
-# Distinto SCZ: catálogo y plataforma de vendedores
+# Distinto SCZ: tienda de perfumes en línea
 
 *Tu fragancia, tu sello.*
 
-Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, adaptado al celular como una app (barra de navegación inferior, catálogo en 2 columnas, carruseles y ventanas que suben desde abajo), con el logo de la marca y animaciones (intro con el logo, aparición de elementos al hacer scroll, contadores animados, marquesina y transiciones entre páginas; se desactivan si el sistema pide reducir el movimiento). Incluye:
+Sitio web en negro con líneas blancas para la perfumería **Distinto SCZ**, adaptado al celular como una app (barra de navegación inferior, catálogo en 2 columnas, carruseles y ventanas que suben desde abajo), con el logo de la marca y animaciones (se desactivan si el sistema pide reducir el movimiento). Es una tienda de **compra directa** (ya no tiene vendedores). Incluye:
 
 - **Tienda para clientes**:
-  - Catálogo con precios, búsqueda y filtro por categoría.
-  - Carrito y pedido sin crear cuenta (nombre y celular).
-  - Al realizar el pedido se muestra el **QR de pago** (Yape) con el monto exacto. El cliente puede descargar el QR, subir la captura del comprobante y enviarlo por WhatsApp.
-  - Página de seguimiento del pedido con su estado e historial, y sección "Mis pedidos" en el mismo dispositivo.
-- **Registro de vendedores**: las personas envían su solicitud y el administrador la **acepta o rechaza**.
-- **Panel del vendedor** (solo cuando está aprobado):
-  - **Precios y comisiones**: precio sugerido de venta y comisión por cada perfume, que define el administrador.
-  - **Carrito**: arma un pedido con el nombre del cliente, su teléfono, la dirección y notas.
-  - **Mis pedidos**: estado de cada pedido con barra de progreso e historial.
-  - **Ranking** mensual de vendedores, con podio para los 3 primeros.
-- **Panel del administrador**:
-  - Resumen con indicadores y el **estado de la tienda**: modo "Próximamente" (los visitantes ven una pantalla de lanzamiento y no se reciben pedidos ni registros, mientras el administrador sigue trabajando) o abierta al público, con un solo botón.
-  - Solicitudes de vendedores: aceptar, rechazar, suspender o eliminar.
-  - Catálogo: agregar, editar, ocultar o eliminar perfumes, con imagen por URL o archivo subido.
-  - Pedidos de clientes directos y de vendedores, con filtros: confirmar el pago, ver el comprobante, escribir al cliente por WhatsApp y cambiar el estado (Pendiente, Confirmado, En preparación, Enviado, Entregado o Cancelado) con una nota, y eliminar pedidos (uno por uno o varios a la vez, por ejemplo los de prueba).
-  - Pagos y cuenta: cambiar el QR de pago, el WhatsApp de la tienda y la contraseña.
-  - **Avisos por correo**: si el cliente deja su correo, recibe un aviso al hacer el pedido, al confirmarse el pago y cada vez que cambia el estado (se envía desde el Gmail de la tienda con **Google Apps Script**, sin contraseña de aplicación, siguiendo los pasos del panel; también se puede usar SMTP con contraseña de aplicación).
-  - Ranking por mes, con la comisión de cada vendedor.
-  - Cambio de contraseña.
+  - Catálogo con precios, búsqueda, filtros por categoría y por marca, y filtro de **ofertas**.
+  - **Descuentos en %** por perfume: etiqueta roja ("BLACK FRIDAY -20%"), precio anterior tachado y precio nuevo, que es el que se cobra.
+  - Carrito y pedido sin crear cuenta (nombre, celular y forma de entrega).
+  - Al realizar el pedido se muestra el **QR de pago** (Yape) con el monto exacto. El cliente puede subir la captura del comprobante y enviarlo por WhatsApp.
+  - Página de seguimiento del pedido y sección "Mis pedidos" en el mismo dispositivo.
+- **Modo Black Friday** (se enciende y apaga desde el panel): barra roja superior, portada con cuenta regresiva hasta la fecha de fin y sección "Ofertas imperdibles".
+- **Panel del administrador** (entrada con el enlace "Acceso" del pie de página):
+  - Resumen con indicadores, **estado de la tienda** ("Próximamente" o abierta) y la campaña **Black Friday** (encendida/apagada y fecha de fin).
+  - Catálogo: agregar, editar, ocultar o eliminar perfumes, con descuento %, stock, buscador e imagen.
+  - Stock: precio de compra, ventas fuera de la página, compras de mercadería, devoluciones y **reporte en Excel**.
+  - Pedidos con filtros: confirmar el pago, ver el comprobante, cambiar el estado, devoluciones y eliminar pedidos.
+  - Pagos y cuenta: QR de pago, WhatsApp, avisos por correo, usuario y contraseña.
 
 ## Cómo abrirla (la forma fácil)
 

@@ -201,26 +201,9 @@ function closedToPublic(ctx) {
   return getSettings().coming_soon === '1' && !(ctx.user && ctx.user.role === 'admin');
 }
 
-route('POST', '/api/register', async (ctx) => {
-  if (closedToPublic(ctx)) throw new HttpError(403, 'La tienda abrirá muy pronto. Vuelve en unos días.');
-  limit(`register:${clientIp(ctx.req)}`, 5, 60 * MINUTE, 'Demasiadas solicitudes. Intenta de nuevo en una hora.');
-  const b = ctx.body;
-  const name = text(b.name, 100);
-  const email = text(b.email, 150).toLowerCase();
-  const password = String(b.password || '');
-  const city = text(b.city, 80);
-  if (!name || !email || !password) throw new HttpError(400, 'Nombre, correo y contraseña son obligatorios');
-  if (!city) throw new HttpError(400, 'Elige tu ciudad');
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Correo electrónico inválido');
-  if (password.length < 6) throw new HttpError(400, 'La contraseña debe tener al menos 6 caracteres');
-  if (db.prepare('SELECT id FROM users WHERE email = ?').get(email)) {
-    throw new HttpError(409, 'Ya existe una cuenta con ese correo');
-  }
-  db.prepare(
-    `INSERT INTO users (name, email, phone, city, message, password_hash, role, status)
-     VALUES (?, ?, ?, ?, ?, ?, 'vendor', 'pending')`
-  ).run(name, email, text(b.phone, 40), city, text(b.message, 1000), hashPassword(password));
-  return { ok: true, message: 'Solicitud enviada. El administrador revisará tu registro.' };
+// La tienda ya no tiene vendedores: no se aceptan registros nuevos.
+route('POST', '/api/register', async () => {
+  throw new HttpError(410, 'Ya no aceptamos registros de vendedores. Puedes comprar directamente en la tienda.');
 });
 
 route('POST', '/api/login', async (ctx) => {
@@ -312,13 +295,25 @@ route('POST', '/api/me/logout-all', async (ctx) => {
 
 // ---- Catálogo
 
+// Precio final con el descuento (%) del perfume.
+function finalPrice(p) {
+  const pct = Math.min(90, Math.max(0, Number(p.discount_pct) || 0));
+  return Math.round(p.suggested_price * (100 - pct)) / 100;
+}
+
 // El stock exacto solo lo ve el administrador; al público solo se le dice si está agotado.
 const PUBLIC_FIELDS = 'id, name, brand, category, size_ml, description, image, bestseller, (stock IS NOT NULL AND stock <= 0) AS sold_out';
 
 route('GET', '/api/catalog', async () => ({
   perfumes: db
-    .prepare(`SELECT ${PUBLIC_FIELDS}, suggested_price AS price FROM perfumes WHERE active = 1 ORDER BY brand, name`)
-    .all(),
+    .prepare(`SELECT ${PUBLIC_FIELDS}, suggested_price, discount_pct FROM perfumes WHERE active = 1 ORDER BY brand, name`)
+    .all()
+    .map(({ suggested_price, discount_pct, ...p }) => ({
+      ...p,
+      price: finalPrice({ suggested_price, discount_pct }),
+      list_price: suggested_price,
+      discount_pct: discount_pct > 0 ? discount_pct : 0,
+    })),
 }));
 
 // ¿Hay unidades suficientes para esta cantidad? (sin revelar cuántas quedan)
@@ -346,7 +341,7 @@ route('GET', '/api/vendor/perfumes', async (ctx) => {
 function loadOrder(id) {
   const order = db
     .prepare(
-      `SELECT o.*, u.name AS vendor_name, u.email AS vendor_email, u.phone AS vendor_phone
+      `SELECT o.*, COALESCE(u.name, o.legacy_vendor) AS vendor_name, u.email AS vendor_email, u.phone AS vendor_phone
        FROM orders o LEFT JOIN users u ON u.id = o.vendor_id WHERE o.id = ?`
     )
     .get(id);
@@ -433,7 +428,7 @@ function createOrder(b, vendor) {
     return { p, qty, commission: vendor ? p.commission : 0 };
   });
 
-  const total = items.reduce((sum, { p, qty }) => sum + p.suggested_price * qty, 0);
+  const total = items.reduce((sum, { p, qty }) => sum + finalPrice(p) * qty, 0);
   const totalCommission = items.reduce((sum, { commission, qty }) => sum + commission * qty, 0);
   const token = newToken(); // enlace de seguimiento (también para los clientes de los vendedores)
 
@@ -467,7 +462,7 @@ function createOrder(b, vendor) {
     );
     for (const { p, qty, commission } of items) {
       const label = [p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · ');
-      insertItem.run(lastInsertRowid, p.id, label, qty, p.suggested_price, commission, p.cost ?? null);
+      insertItem.run(lastInsertRowid, p.id, label, qty, finalPrice(p), commission, p.cost ?? null);
     }
     takeStock(lastInsertRowid);
     db.prepare(`INSERT INTO order_history (order_id, status, note) VALUES (?, 'pendiente', 'Pedido creado')`).run(
@@ -757,8 +752,11 @@ route('PATCH', '/api/orders/:id/payment', async (ctx) => {
 
 // ---- Ajustes de la tienda (QR de pago, WhatsApp)
 
-const SETTING_KEYS = ['payment_qr', 'whatsapp', 'coming_soon'];
-const DEFAULT_SETTINGS = { payment_qr: '/img/qr-yape.jpg', whatsapp: '59163626511', coming_soon: '' };
+const SETTING_KEYS = ['payment_qr', 'whatsapp', 'coming_soon', 'black_friday', 'black_friday_end'];
+const DEFAULT_SETTINGS = {
+  payment_qr: '/img/qr-yape.jpg', whatsapp: '59163626511', coming_soon: '',
+  black_friday: '1', black_friday_end: '2026-11-30T23:59', // diseño Black Friday y fecha en que termina la oferta
+};
 
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -787,6 +785,12 @@ route('PUT', '/api/admin/settings', async (ctx) => {
   if ('payment_qr' in ctx.body) upsert.run('payment_qr', text(ctx.body.payment_qr, 500));
   if ('whatsapp' in ctx.body) upsert.run('whatsapp', text(ctx.body.whatsapp, 30).replace(/[^\d]/g, ''));
   if ('coming_soon' in ctx.body) upsert.run('coming_soon', ctx.body.coming_soon ? '1' : '');
+  if ('black_friday' in ctx.body) upsert.run('black_friday', ctx.body.black_friday ? '1' : '0');
+  if ('black_friday_end' in ctx.body) {
+    const end = text(ctx.body.black_friday_end, 20);
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(end)) throw new HttpError(400, 'Fecha de fin inválida');
+    upsert.run('black_friday_end', end);
+  }
   return { settings: getSettings() };
 });
 
@@ -813,7 +817,7 @@ route('GET', '/api/orders', async (ctx) => {
   }
   const orders = db
     .prepare(
-      `SELECT o.*, u.name AS vendor_name,
+      `SELECT o.*, COALESCE(u.name, o.legacy_vendor) AS vendor_name,
               (SELECT COALESCE(SUM(quantity), 0) FROM order_items WHERE order_id = o.id) AS units
        FROM orders o LEFT JOIN users u ON u.id = o.vendor_id
        ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
@@ -927,8 +931,6 @@ route('GET', '/api/admin/summary', async (ctx) => {
   requireAdmin(ctx);
   const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
   return {
-    pendingVendors: one(`SELECT COUNT(*) FROM users WHERE role = 'vendor' AND status = 'pending'`),
-    approvedVendors: one(`SELECT COUNT(*) FROM users WHERE role = 'vendor' AND status = 'approved'`),
     activePerfumes: one('SELECT COUNT(*) FROM perfumes WHERE active = 1'),
     lowStock: db.prepare('SELECT id, brand, name, size_ml, stock FROM perfumes WHERE active = 1 AND stock IS NOT NULL AND stock <= 3 ORDER BY stock, name').all(),
     openOrders: one(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('entregado', 'cancelado')`),
@@ -996,8 +998,17 @@ function perfumeFields(b) {
     b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
     stockValue(b.stock),
     costValue(b.cost),
+    discountValue(b.discount_pct),
     b.bestseller === true || b.bestseller === 1 || b.bestseller === '1' || b.bestseller === 'on' ? 1 : 0,
   ];
+}
+
+// Descuento en porcentaje (0 a 90).
+function discountValue(value) {
+  if (value === '' || value == null) return 0;
+  const n = Math.round(Number(value) * 100) / 100;
+  if (!Number.isFinite(n) || n < 0 || n > 90) throw new HttpError(400, 'El descuento debe ser un porcentaje entre 0 y 90');
+  return n;
 }
 
 // Precio de compra: vacío = sin registrar.
@@ -1023,8 +1034,8 @@ route('POST', '/api/admin/perfumes', async (ctx) => {
   requireAdmin(ctx);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, cost, bestseller)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, cost, discount_pct, bestseller)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(...perfumeFields(ctx.body));
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(lastInsertRowid) };
@@ -1036,7 +1047,7 @@ route('PUT', '/api/admin/perfumes/:id', async (ctx) => {
   const { changes } = db
     .prepare(
       `UPDATE perfumes SET name = ?, brand = ?, category = ?, size_ml = ?, description = ?, image = ?,
-              suggested_price = ?, commission = ?, active = ?, stock = ?, cost = ?, bestseller = ? WHERE id = ?`
+              suggested_price = ?, commission = ?, active = ?, stock = ?, cost = ?, discount_pct = ?, bestseller = ? WHERE id = ?`
     )
     .run(...perfumeFields(ctx.body), id);
   if (!changes) throw new HttpError(404, 'Perfume no encontrado');
@@ -1058,6 +1069,14 @@ route('PATCH', '/api/admin/perfumes/:id/stock', async (ctx) => {
     stock = stockValue(ctx.body.stock);
   }
   db.prepare('UPDATE perfumes SET stock = ? WHERE id = ?').run(stock, id);
+  return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
+});
+
+route('PATCH', '/api/admin/perfumes/:id/discount', async (ctx) => {
+  requireAdmin(ctx);
+  const id = Number(ctx.params.id);
+  const { changes } = db.prepare('UPDATE perfumes SET discount_pct = ? WHERE id = ?').run(discountValue(ctx.body.discount_pct), id);
+  if (!changes) throw new HttpError(404, 'Perfume no encontrado');
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
 });
 
@@ -1249,7 +1268,7 @@ route('GET', '/api/admin/report', async (ctx) => {
   // Ventas en la página (sin pedidos cancelados). El costo es el registrado al vender o, si no había, el actual.
   const web = db.prepare(
     `SELECT o.id AS order_id, datetime(o.created_at, 'localtime') AS created, o.client_name, o.client_phone, o.source, o.status,
-            o.payment_status, o.delivery_method, o.delivery_city, u.name AS vendor_name,
+            o.payment_status, o.delivery_method, o.delivery_city, u.name AS vendor_name, o.legacy_vendor,
             i.perfume_name, i.perfume_id, i.quantity, i.unit_price, i.unit_commission,
             COALESCE(i.unit_cost, p.cost) AS unit_cost
      FROM order_items i
@@ -1262,7 +1281,7 @@ route('GET', '/api/admin/report', async (ctx) => {
     ...l,
     ref: `Pedido #${l.order_id}`,
     channel: l.source === 'cliente' ? 'Página (cliente)' : 'Página (vendedor)',
-    vendor: l.source === 'cliente' ? '' : l.vendor_name || '—',
+    vendor: l.source === 'cliente' ? '' : l.vendor_name || l.legacy_vendor || '—',
     who: [l.client_name, l.client_phone].filter(Boolean).join(' · '),
     status: STATUS_NAMES[l.status] || l.status,
     pay: l.payment_status === 'pagado' ? 'Pagado' : 'Pendiente',

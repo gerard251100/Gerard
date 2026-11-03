@@ -924,3 +924,122 @@ tr[hidden], .table-wrap[hidden] { display: none; }
   .catalog-search input { max-width: none; }
   .row-flash { animation: rowFlash 1.6s ease; }
 }
+
+/* =================================================================
+   Black Friday
+   ================================================================= */
+:root { --bf: #ff2b43; --bf-soft: rgba(255, 43, 67, 0.16); }
+.bf-red { color: var(--bf); }
+
+/* Barra superior que se desliza */
+.bf-bar { position: relative; z-index: 21; overflow: hidden; background: var(--bf); color: #fff; }
+.bf-bar[hidden] { display: none; }
+.bf-bar-track {
+  display: inline-flex; gap: 1.4rem; padding: 0.45rem 0; white-space: nowrap; color: #fff;
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase;
+  animation: marquee 30s linear infinite;
+}
+.bf-bar-track .dot { opacity: 0.7; }
+
+/* Etiqueta roja en las tarjetas */
+.bf-badge {
+  position: absolute; left: 0.6rem; bottom: 0.6rem; z-index: 2;
+  display: inline-flex; align-items: stretch; border-radius: 999px; overflow: hidden;
+  font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase;
+  box-shadow: 0 6px 20px rgba(255, 43, 67, 0.45);
+  animation: bfPulse 2.2s ease-in-out infinite;
+}
+.bf-badge b { background: #000; color: #fff; padding: 0.32rem 0.6rem; font-weight: 700; border: 1px solid var(--bf); border-right: none; border-radius: 999px 0 0 999px; }
+.bf-badge i { background: var(--bf); color: #fff; padding: 0.32rem 0.6rem; font-style: normal; font-weight: 800; letter-spacing: 0.04em; font-size: 0.78rem; }
+@keyframes bfPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+.product.on-sale { box-shadow: inset 0 0 0 1px rgba(255, 43, 67, 0.35); }
+.product-price.has-deal { display: flex; flex-direction: column; gap: 0.1rem; }
+.old-price { font-family: var(--sans); font-size: 0.85rem; color: var(--muted); text-decoration: line-through; text-decoration-color: var(--bf); }
+.deal-price { color: var(--bf); font-weight: 600; }
+.bf-mini { color: #fff; background: var(--bf); padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 0.68rem; font-weight: 700; }
+.chip.chip-deal { border-color: var(--bf); color: #fff; }
+.chip.chip-deal.active, .chip.chip-deal:hover { background: var(--bf); border-color: var(--bf); color: #fff; }
+
+/* Portada Black Friday */
+.bf-hero {
+  position: relative; overflow: hidden; isolation: isolate;
+  display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 2rem; align-items: center;
+  padding: clamp(2rem, 6vw, 4.5rem) clamp(1.25rem, 5vw, 3.5rem);
+  border: 1px solid var(--line); background: #000;
+}
+.bf-glow {
+  position: absolute; inset: -30%; z-index: -1; pointer-events: none;
+  background: radial-gradient(40% 50% at 75% 45%, rgba(255, 43, 67, 0.28), transparent 70%),
+              radial-gradient(35% 40% at 15% 90%, rgba(255, 255, 255, 0.07), transparent 70%);
+  animation: bfGlow 8s ease-in-out infinite alternate;
+}
+@keyframes bfGlow { from { transform: translate3d(-3%, -2%, 0) scale(1); } to { transform: translate3d(3%, 2%, 0) scale(1.08); } }
+.bf-pill {
+  display: inline-block; padding: 0.35rem 0.9rem; border-radius: 999px; border: 1px solid var(--bf);
+  color: #fff; background: var(--bf-soft); font-size: 0.68rem; letter-spacing: 0.25em; text-transform: uppercase;
+}
+.bf-title { margin: 1rem 0 0.4rem; display: flex; flex-direction: column; line-height: 0.88; font-family: 'Inter', var(--sans); font-weight: 800; letter-spacing: -0.02em; }
+.bf-word { font-size: clamp(3.4rem, 11vw, 8.5rem); animation: fadeUp 0.8s cubic-bezier(.2,.8,.2,1) both; }
+.bf-word.outline { color: transparent; -webkit-text-stroke: 2px var(--bf); animation-delay: 0.15s; text-shadow: 0 0 40px rgba(255, 43, 67, 0.35); }
+.bf-sub { font-size: clamp(1rem, 2.2vw, 1.25rem); color: #ddd; margin: 0.6rem 0 0.4rem; }
+.bf-sub strong { color: #fff; }
+.bf-hero .countdown { margin-top: 1.4rem; }
+.bf-hero .cd-unit { border-color: var(--bf); border-radius: 14px; background: rgba(255, 43, 67, 0.08); }
+.bf-hero .cd-num { color: #fff; }
+.btn.solid.bf-cta { background: linear-gradient(180deg, #ff4a5f, #e01530); color: #fff; border-color: #ff6274; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 10px 30px rgba(255, 43, 67, 0.45); }
+.btn.solid.bf-cta:hover { background: #ff2b43; color: #fff; box-shadow: 0 0 36px rgba(255, 43, 67, 0.7); }
+.bf-visual { position: relative; aspect-ratio: 1; max-width: 380px; width: 100%; margin: 0 auto; }
+.bf-visual .ring { position: absolute; inset: 0; border: 1px solid var(--line-soft); border-radius: 50%; }
+.bf-visual .ring.dashed { inset: 6%; border-style: dashed; animation: spin 40s linear infinite; }
+.bf-visual .ring.pulse { border-color: var(--bf); animation: pulseRing 3s ease-out infinite; }
+.bf-visual .ring.pulse.two { animation-delay: 1.5s; }
+.bf-visual img { position: absolute; inset: 18%; width: 64%; height: 64%; object-fit: contain; filter: drop-shadow(0 0 30px rgba(255, 43, 67, 0.35)); }
+.bf-visual .orbit { position: absolute; inset: 0; animation: spin 10s linear infinite; }
+.bf-visual .orbit::after { content: ''; position: absolute; top: -5px; left: 50%; width: 10px; height: 10px; border-radius: 50%; background: var(--bf); box-shadow: 0 0 16px var(--bf); }
+.bf-stamp {
+  position: absolute; right: -2%; bottom: 6%; transform: rotate(-12deg);
+  display: flex; flex-direction: column; align-items: center; padding: 0.6rem 1rem; border-radius: 12px;
+  background: var(--bf); color: #fff; font-weight: 800; letter-spacing: 0.12em; line-height: 1.05; font-size: 0.9rem;
+  box-shadow: 0 12px 30px rgba(255, 43, 67, 0.5);
+}
+.bf-marquee { border-color: var(--bf); }
+.bf-marquee .dot { color: var(--bf); }
+.bf-eyebrow { color: var(--bf); }
+.bf-deals .section-head { border-bottom-color: var(--bf); }
+
+/* En modo Black Friday algunos detalles toman el rojo */
+body.bf-mode .scroll-progress { background: var(--bf); }
+body.bf-mode .badge.count, body.bf-mode .tab-badge { background: var(--bf); color: #fff; }
+
+/* Tarjeta del panel */
+.bf-card { display: grid; gap: 1rem; margin-bottom: 1.5rem; }
+.bf-card.is-on { border-color: var(--bf); box-shadow: 0 0 0 1px var(--bf-soft), 0 0 40px rgba(255, 43, 67, 0.12); }
+.bf-controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
+.bf-controls input[type="datetime-local"] { color-scheme: dark; }
+.disc-ctl { display: inline-flex; align-items: center; gap: 0.3rem; }
+.disc-ctl input { width: 4.6rem; padding: 0.35rem 0.4rem; text-align: center; border-radius: 10px; }
+.footer-access { color: var(--muted); text-decoration: underline; }
+
+@media (max-width: 860px) {
+  .bf-hero { grid-template-columns: 1fr; text-align: center; }
+  .bf-hero .hero-actions, .bf-hero .cd-units { justify-content: center; }
+  .bf-title { align-items: center; }
+  .bf-visual { max-width: 240px; grid-row: 1; }
+}
+@media (max-width: 720px) {
+  .bf-hero { padding: 1.6rem 1rem 2rem; }
+  .bf-word.outline { -webkit-text-stroke-width: 1.5px; }
+  .bf-badge { left: 0.4rem; bottom: 0.4rem; font-size: 0.52rem; }
+  .bf-badge i { font-size: 0.68rem; padding: 0.28rem 0.45rem; }
+  .bf-badge b { padding: 0.28rem 0.45rem; }
+  .bf-stamp { font-size: 0.7rem; }
+  .old-price { font-size: 0.75rem; }
+}
+@media (prefers-reduced-motion: reduce) { .bf-bar-track, .bf-badge, .bf-glow { animation: none; } }
+/* "FRIDAY" relleno en rojo (el contorno de la fuente dejaba líneas internas) */
+.bf-word.outline { color: var(--bf); -webkit-text-stroke: 0; text-shadow: 0 0 28px rgba(255, 43, 67, 0.55), 0 0 2px rgba(255, 43, 67, 0.9); }
+@media (max-width: 860px) {
+  .bf-visual { grid-row: auto; max-width: 180px; }
+  .bf-stamp { right: -10%; font-size: 0.62rem; padding: 0.4rem 0.7rem; }
+}
+.bf-sub strong.bf-red { color: var(--bf); }

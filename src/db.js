@@ -181,6 +181,30 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_purchases_perfume ON purchases(perfume_id, purchased_at);
 `);
+// Descuento en porcentaje por perfume (Black Friday y otras ofertas).
+if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'discount_pct')) {
+  db.exec('ALTER TABLE perfumes ADD COLUMN discount_pct REAL NOT NULL DEFAULT 0');
+}
+// La tienda ya no trabaja con vendedores: sus pedidos se conservan (con el nombre guardado) y las cuentas se eliminan.
+if (!db.prepare('PRAGMA table_info(orders)').all().some((c) => c.name === 'legacy_vendor')) {
+  db.exec('ALTER TABLE orders ADD COLUMN legacy_vendor TEXT');
+}
+{
+  const vendors = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'vendor'").get().n;
+  if (vendors) {
+    db.exec('BEGIN');
+    try {
+      db.exec(`UPDATE orders SET legacy_vendor = (SELECT name FROM users WHERE users.id = orders.vendor_id), vendor_id = NULL
+               WHERE vendor_id IN (SELECT id FROM users WHERE role = 'vendor')`);
+      db.exec("DELETE FROM users WHERE role = 'vendor'");
+      db.exec('COMMIT');
+      console.log(`Vendedores eliminados: ${vendors} (sus pedidos se conservan).`);
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+}
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_token ON orders(track_token)');
 
 db.exec(`

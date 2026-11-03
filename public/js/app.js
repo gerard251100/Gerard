@@ -227,16 +227,10 @@ function renderNav() {
     const n = cart.count();
     html += link('#/carrito', 'Carrito', n ? ` <span class="badge count">${n}</span>` : '');
     if (myOrders.read().length) html += link('#/mis-pedidos', 'Mis pedidos');
-    html += link('#/registro', 'Sé vendedor') + link('#/login', 'Ingresar');
-  } else if (state.user.role === 'admin') {
+  } else {
     const n = cart.count();
     html += link('#/carrito', 'Carrito', n ? ` <span class="badge count">${n}</span>` : '');
     html += link('#/admin', 'Administración');
-    html += '<button class="link" data-action="logout">Salir</button>';
-  } else {
-    const n = cart.count();
-    html += link('#/panel', 'Mi panel');
-    html += link('#/panel/carrito', 'Carrito', n ? ` <span class="badge count">${n}</span>` : '');
     html += '<button class="link" data-action="logout">Salir</button>';
   }
   nav.innerHTML = html;
@@ -268,14 +262,9 @@ function renderTabbar(route) {
   if (!state.user) {
     html += item('#/carrito', 'bag', 'Carrito', { badge: n });
     html += item('#/mis-pedidos', 'receipt', 'Pedidos', { match: ['#/pedido/'] });
-    html += item('#/login', 'user', 'Cuenta', { match: ['#/registro'] });
-  } else if (state.user.role === 'admin') {
+  } else {
     html += item('#/carrito', 'bag', 'Carrito', { badge: n, match: ['#/pedido/'] });
     html += item('#/admin', 'panel', 'Admin');
-    html += item('#/', 'out', 'Salir', { action: 'logout' });
-  } else {
-    html += item('#/panel/carrito', 'bag', 'Carrito', { badge: n });
-    html += item('#/panel', 'panel', 'Mi panel', { match: ['#/panel/pedidos', '#/panel/ranking'] });
     html += item('#/', 'out', 'Salir', { action: 'logout' });
   }
   bar.innerHTML = html;
@@ -308,12 +297,7 @@ const routes = {
   '#/catalogo': viewCatalog,
   '#/carrito': viewShopCart,
   '#/mis-pedidos': viewMyOrders,
-  '#/registro': viewRegister,
   '#/login': viewLogin,
-  '#/panel': () => viewVendor('catalogo'),
-  '#/panel/carrito': () => viewVendor('carrito'),
-  '#/panel/pedidos': () => viewVendor('pedidos'),
-  '#/panel/ranking': () => viewVendor('ranking'),
   '#/admin': () => viewAdmin(state.tab.admin || 'resumen'),
 };
 
@@ -342,13 +326,32 @@ window.addEventListener('hashchange', router);
    Vistas públicas
    ================================================================= */
 async function viewHome() {
-  const panelLink = state.user
-    ? `<a class="btn" href="${state.user.role === 'admin' ? '#/admin' : '#/panel'}">Ir a mi panel</a>`
-    : '<a class="btn" href="#/registro">Quiero ser vendedor</a>';
+  const panelLink = state.user?.role === 'admin' ? '<a class="btn" href="#/admin">Ir a mi panel</a>' : '<a class="btn" href="#/mis-pedidos">Mis pedidos</a>';
   const mode = cardMode();
-  const marqueeItems = ['Distinto SCZ', '<span class="script">Tu fragancia, tu sello</span>', 'Perfumes originales', 'Hombre', 'Mujer', 'Unisex', 'Santa Cruz']
+  const bf = bfActive();
+  const marqueeItems = (bf
+    ? ['Black Friday', '<span class="script">Tu fragancia, tu sello</span>', 'Perfumes originales', 'Descuentos especiales', 'Paga con QR', 'Santa Cruz']
+    : ['Distinto SCZ', '<span class="script">Tu fragancia, tu sello</span>', 'Perfumes originales', 'Hombre', 'Mujer', 'Unisex', 'Santa Cruz'])
     .map((t) => (t.startsWith('<') ? t : `<span>${t}</span>`)).join('<span class="dot">◇</span>');
-  app.innerHTML = `
+  const hero = bf ? `
+    <section class="bf-hero">
+      <div class="bf-glow" aria-hidden="true"></div>
+      <div class="bf-hero-content">
+        <div class="bf-kicker"><span class="bf-pill">Solo por tiempo limitado</span></div>
+        <h1 class="bf-title"><span class="bf-word">BLACK</span><span class="bf-word outline">FRIDAY</span></h1>
+        <div class="bf-sub">en <strong>Distinto SCZ</strong> · <span id="bfMax">perfumes originales con descuento</span></div>
+        ${countdownHTML(bfEnd(), `La oferta termina el ${fmtEnd(bfEnd())}`)}
+        <div class="hero-actions">
+          <a class="btn solid bf-cta" href="#/catalogo?ofertas">Ver ofertas</a>
+          <a class="btn" href="#/catalogo">Todo el catálogo</a>
+        </div>
+      </div>
+      <div class="bf-visual" aria-hidden="true">
+        <div class="ring"></div><div class="ring dashed"></div><div class="ring pulse"></div><div class="ring pulse two"></div><div class="orbit"></div>
+        <img src="/img/emblem.png" alt="">
+        <div class="bf-stamp"><span>BLACK</span><span>FRIDAY</span></div>
+      </div>
+    </section>` : `
     <section class="hero brand-hero">
       <div class="hero-content">
         <div class="eyebrow">Perfumería · Santa Cruz</div>
@@ -356,7 +359,6 @@ async function viewHome() {
         <div class="hero-tag"><span class="typed" id="typed"></span></div>
         <div class="hero-rule"></div>
         <p>Fragancias originales que hablan por ti. Elige tu perfume, haz tu pedido en línea y paga al instante con QR.</p>
-        ${countdownHTML()}
         <div class="hero-actions">
           <a class="btn solid" href="#/catalogo">Comprar ahora</a>
           ${panelLink}
@@ -370,8 +372,17 @@ async function viewHome() {
         <div class="orbit"></div>
         <img src="/img/emblem.png" alt="">
       </div>
+    </section>`;
+  app.innerHTML = `
+    ${hero}
+    <div class="marquee ${bf ? 'bf-marquee' : ''}" aria-hidden="true"><div class="marquee-track">${marqueeItems}<span class="dot">◇</span>${marqueeItems}<span class="dot">◇</span></div></div>
+    <section class="section bf-deals" id="deals" hidden>
+      <div class="section-head">
+        <div><div class="eyebrow bf-eyebrow">Black Friday</div><h2>Ofertas imperdibles</h2></div>
+        <a class="btn sm" href="#/catalogo?ofertas">Ver todas</a>
+      </div>
+      <div id="dealsGrid"></div>
     </section>
-    <div class="marquee" aria-hidden="true"><div class="marquee-track">${marqueeItems}<span class="dot">◇</span>${marqueeItems}<span class="dot">◇</span></div></div>
     <section class="section bestsellers" id="bestsellers" hidden>
       <div class="section-head">
         <div><div class="eyebrow">Top ventas</div><h2>Los más vendidos</h2></div>
@@ -387,19 +398,17 @@ async function viewHome() {
     <section class="section">
       <div class="section-head"><h2>Destacados</h2><a class="btn sm" href="#/catalogo">Ver todo</a></div>
       <div id="featured"></div>
-    </section>
-    ${state.user ? '' : `
-    <section class="section cta">
-      <img src="/img/emblem.png" alt="" aria-hidden="true">
-      <div>
-        <h2 style="margin:0">Vende con Distinto SCZ</h2>
-        <div class="script">Gana comisión y compite por los premios del mes</div>
-      </div>
-      <a class="btn solid" href="#/registro">Registrarme</a>
-    </section>`}`;
-  typeWriter($('#typed'), 'Tu fragancia, tu sello');
-  startCountdown();
+    </section>`;
+  if (bf) startCountdown();
+  else typeWriter($('#typed'), 'Tu fragancia, tu sello');
   const { perfumes } = await api('/api/catalog');
+  const deals = perfumes.filter((p) => p.discount_pct > 0 && !p.sold_out).sort((a, b) => b.discount_pct - a.discount_pct);
+  if (deals.length) {
+    $('#deals').hidden = false;
+    $('#dealsGrid').innerHTML = `<div class="grid best-grid">${deals.slice(0, 8).map((p) => productCard(p, { mode })).join('')}</div>`;
+    const max = Math.max(...deals.map((p) => p.discount_pct));
+    if ($('#bfMax')) $('#bfMax').innerHTML = `hasta <strong class="bf-red">-${fmtPct(max)}%</strong> en perfumes originales`;
+  }
   const best = perfumes.filter((p) => p.bestseller);
   if (best.length) {
     $('#bestsellers').hidden = false;
@@ -408,6 +417,21 @@ async function viewHome() {
   $('#featured').innerHTML = perfumes.length
     ? `<div class="grid carousel">${perfumes.slice(0, 8).map((p) => productCard(p, { mode })).join('')}</div>`
     : '<div class="empty">Pronto publicaremos nuestro catálogo.</div>';
+}
+
+// 20 -> "20", 12.5 -> "12,5"
+const fmtPct = (n) => String(Math.round(Number(n) * 10) / 10).replace('.', ',');
+
+// Etiqueta y precio con descuento de una tarjeta de perfume.
+function discountBadge(p) {
+  if (!(p.discount_pct > 0)) return '';
+  return `<span class="bf-badge">${bfActive() ? '<b>BLACK FRIDAY</b>' : '<b>OFERTA</b>'}<i>-${fmtPct(p.discount_pct)}%</i></span>`;
+}
+function priceHtml(p) {
+  if (p.discount_pct > 0 && p.list_price > p.price) {
+    return `<div class="product-price has-deal"><s class="old-price">${money(p.list_price)}</s><span class="deal-price">${money(p.price)}</span></div>`;
+  }
+  return `<div class="product-price">${money(p.price)}</div>`;
 }
 
 function typeWriter(el, textValue, delay = 900) {
@@ -422,11 +446,9 @@ function typeWriter(el, textValue, delay = 900) {
   setTimeout(tick, delay);
 }
 
-// mode: 'shop' (cliente: precio + carrito), 'vendor' (precio sugerido + comisión + carrito) o 'view' (solo precio).
-// El administrador también ve la tienda como cliente (para probarla y hacer pedidos de prueba).
-// Los vendedores arman sus pedidos desde su panel, con precios y comisiones.
+// Todos ven la tienda como cliente (el administrador también, para probarla y hacer pedidos de prueba).
 function cardMode() {
-  return state.user?.role === 'vendor' ? 'view' : 'shop';
+  return 'shop';
 }
 
 function productCard(p, { mode = 'view' } = {}) {
@@ -443,8 +465,8 @@ function productCard(p, { mode = 'view' } = {}) {
             <button class="btn sm solid" data-add="${p.id}">${label}</button>
           </div>`;
   return `
-    <article class="product ${soldOut ? 'sold-out' : ''}" data-id="${p.id}">
-      <div class="product-img">${productImage(p)}${soldOut ? '<span class="stock-badge out">Agotado</span>' : ''}${p.bestseller ? `<span class="best-badge">★ Más vendido</span>` : ''}</div>
+    <article class="product ${soldOut ? 'sold-out' : ''} ${p.discount_pct > 0 ? 'on-sale' : ''}" data-id="${p.id}">
+      <div class="product-img">${productImage(p)}${soldOut ? '<span class="stock-badge out">Agotado</span>' : ''}${p.bestseller ? `<span class="best-badge">★ Más vendido</span>` : ''}${discountBadge(p)}</div>
       <div class="product-body">
         <div class="product-brand">${esc(p.brand || 'Perfume')}</div>
         <div class="product-name">${esc(p.name)}</div>
@@ -456,7 +478,7 @@ function productCard(p, { mode = 'view' } = {}) {
             <div><div class="lbl">Tu comisión</div><div class="val gold">${money(p.commission)}</div></div>
           </div>
           ${addBlock('Agregar')}`
-        : `<div class="product-price">${money(p.price)}</div>${mode === 'shop' ? addBlock('Al carrito') : ''}`}
+        : `${priceHtml(p)}${mode === 'shop' ? addBlock('Al carrito') : ''}`}
       </div>
     </article>`;
 }
@@ -512,6 +534,8 @@ const brandOf = (p) => (p.brand || '').trim() || 'Otras marcas';
 
 // Buscador + filtros por categoría y por marca.
 function catalogFilters(perfumes, onChange) {
+  const hasDeals = perfumes.some((p) => p.discount_pct > 0);
+  const startDeals = hasDeals && location.hash.includes('ofertas');
   const categories = [...new Set(perfumes.map((p) => p.category).filter(Boolean))];
   const counts = {};
   perfumes.forEach((p) => { counts[brandOf(p)] = (counts[brandOf(p)] || 0) + 1; });
@@ -520,7 +544,8 @@ function catalogFilters(perfumes, onChange) {
     <div class="toolbar">
       <input type="search" id="q" placeholder="Buscar por nombre o marca…">
       <div class="chips" data-group="cat">
-        <button class="chip active" data-val="">Todos</button>
+        <button class="chip ${startDeals ? '' : 'active'}" data-val="">Todos</button>
+        ${hasDeals ? `<button class="chip chip-deal ${startDeals ? 'active' : ''}" data-val="__ofertas">${bfActive() ? '🔥 Black Friday' : '🔥 Ofertas'}</button>` : ''}
         ${categories.map((c) => `<button class="chip" data-val="${esc(c)}">${esc(c)}</button>`).join('')}
       </div>
     </div>
@@ -533,15 +558,15 @@ function catalogFilters(perfumes, onChange) {
         </div>
       </div>` : ''}`;
   const bind = (root) => {
-    const sel = { cat: '', brand: '' };
+    const sel = { cat: startDeals ? '__ofertas' : '', brand: '' };
     const apply = () => {
       const q = $('#q', root).value.trim().toLowerCase();
       const list = perfumes.filter((p) =>
-        (!sel.cat || p.category === sel.cat) &&
+        (!sel.cat || (sel.cat === '__ofertas' ? p.discount_pct > 0 : p.category === sel.cat)) &&
         (!sel.brand || brandOf(p) === sel.brand) &&
         (!q || `${p.name} ${p.brand} ${p.description}`.toLowerCase().includes(q)));
       // Sin marca elegida ni búsqueda: el catálogo se muestra separado por marca.
-      onChange(list, { grouped: !sel.brand && !q && brands.length > 1 });
+      onChange(list, { grouped: !sel.brand && !q && sel.cat !== '__ofertas' && brands.length > 1 });
     };
     $('#q', root).addEventListener('input', apply);
     $$('[data-group]', root).forEach((group) => {
@@ -583,7 +608,7 @@ async function viewCatalog() {
   const filters = catalogFilters(perfumes, draw);
   root.innerHTML = `${filters.html}<div id="catalogGrid"></div>
     ${mode === 'shop' ? '<div class="center" style="margin-top:2rem"><a class="btn solid" href="#/carrito">Ir al carrito</a></div>'
-      : '<p class="center muted small" style="margin-top:2rem">Eres vendedor: arma los pedidos de tus clientes desde <a href="#/panel" style="text-decoration:underline">Mi panel</a>.</p>'}`;
+      : ''}`;
   filters.bind(root);
 }
 
@@ -678,41 +703,6 @@ function deliveryHtml(o) {
   return '';
 }
 
-function viewRegister() {
-  if (state.user) { location.hash = state.user.role === 'admin' ? '#/admin' : '#/panel'; return; }
-  app.innerHTML = `
-    <div class="form-wrap">
-      <div class="eyebrow center">Únete al equipo</div>
-      <h2 class="center">Registro de vendedores</h2>
-      <p class="center muted">Completa el formulario. El administrador revisará tu solicitud y, una vez aprobada, podrás ingresar a tu panel.</p>
-      <form class="card form" id="registerForm">
-        <div class="form-grid">
-          <div class="field full"><label for="r-name">Nombre completo *</label><input id="r-name" name="name" required maxlength="100" autocomplete="name"></div>
-          <div class="field"><label for="r-email">Correo *</label><input id="r-email" name="email" type="email" required autocomplete="email"></div>
-          <div class="field"><label for="r-phone">Teléfono / WhatsApp</label><input id="r-phone" name="phone" type="tel" autocomplete="tel"></div>
-          <div class="field"><label for="r-city">Ciudad *</label>${citySelect('r-city', 'city')}</div>
-          <div class="field"><label for="r-pass">Contraseña *</label><input id="r-pass" name="password" type="password" required minlength="6" autocomplete="new-password"></div>
-          <div class="field full"><label for="r-msg">¿Por qué quieres ser vendedor?</label><textarea id="r-msg" name="message" maxlength="1000"></textarea></div>
-        </div>
-        <button class="btn solid" type="submit">Enviar solicitud</button>
-        <p class="center small muted">¿Ya tienes cuenta? <a href="#/login" style="text-decoration:underline">Ingresa aquí</a></p>
-      </form>
-    </div>`;
-  $('#registerForm').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const btn = e.submitter;
-    withBusy(btn, async () => {
-      const { message } = await api('/api/register', { method: 'POST', body: formData(e.target) });
-      app.innerHTML = `
-        <div class="form-wrap card center">
-          <div class="eyebrow">Solicitud recibida</div>
-          <h2>¡Gracias!</h2>
-          <p class="muted">${esc(message)} Cuando tu cuenta sea aprobada podrás ingresar con tu correo y contraseña.</p>
-          <a class="btn" href="#/">Volver al inicio</a>
-        </div>`;
-    });
-  });
-}
 
 function viewLogin() {
   if (state.user) { location.hash = state.user.role === 'admin' ? '#/admin' : '#/panel'; return; }
@@ -724,7 +714,6 @@ function viewLogin() {
         <div class="field"><label for="l-email">Correo</label><input id="l-email" name="email" type="email" required autocomplete="email"></div>
         <div class="field"><label for="l-pass">Contraseña</label><input id="l-pass" name="password" type="password" required autocomplete="current-password"></div>
         <button class="btn solid" type="submit">Ingresar</button>
-        <p class="center small muted">¿Quieres vender con nosotros? <a href="#/registro" style="text-decoration:underline">Regístrate</a></p>
       </form>
     </div>`;
   $('#loginForm').addEventListener('submit', (e) => {
@@ -738,62 +727,15 @@ function viewLogin() {
   });
 }
 
-/* =================================================================
-   Panel del vendedor
-   ================================================================= */
 function requireRole(role) {
   if (!state.user) { location.hash = '#/login'; return false; }
-  if (role === 'admin' && state.user.role !== 'admin') { location.hash = '#/panel'; return false; }
-  if (role === 'vendor' && state.user.role !== 'vendor') { location.hash = '#/admin'; return false; }
+  if (role === 'admin' && state.user.role !== 'admin') { location.hash = '#/'; return false; }
   return true;
 }
 
-async function viewVendor(tab) {
-  if (!requireRole('vendor')) return;
-  const tabs = [
-    ['catalogo', 'Precios y comisiones', '#/panel'],
-    ['carrito', `Carrito${cart.count() ? ` (${cart.count()})` : ''}`, '#/panel/carrito'],
-    ['pedidos', 'Mis pedidos', '#/panel/pedidos'],
-    ['ranking', 'Ranking', '#/panel/ranking'],
-  ];
-  app.innerHTML = `
-    <div class="panel-head">
-      <div><div class="eyebrow">Panel de vendedor</div><h2 style="margin:0">Hola, ${esc(state.user.name)}</h2></div>
-    </div>
-    <div id="vendorStats"></div>
-    <nav class="tabs">${tabs.map(([k, label, href]) => `<a class="tab ${k === tab ? 'active' : ''}" href="${href}">${label}</a>`).join('')}</nav>
-    <div id="tabBody"></div>`;
 
-  api('/api/vendor/stats').then((s) => {
-    $('#vendorStats').innerHTML = `
-      <div class="stats">
-        <div class="stat"><div class="lbl">Ventas entregadas · ${esc(monthLabel(s.month))}</div><div class="val">${money(s.delivered.sales)}</div></div>
-        <div class="stat"><div class="lbl">Comisión ganada · mes</div><div class="val" style="color:var(--gold)">${money(s.delivered.commission)}</div></div>
-        <div class="stat"><div class="lbl">Pedidos en curso</div><div class="val">${s.inProgress.orders}</div></div>
-        <div class="stat"><div class="lbl">Posición en ranking</div><div class="val">${s.position ? '#' + s.position : '—'}</div></div>
-      </div>`;
-  }).catch(() => {});
 
-  const body = $('#tabBody');
-  if (tab === 'catalogo') return vendorCatalog(body);
-  if (tab === 'carrito') return vendorCart(body);
-  if (tab === 'pedidos') return vendorOrders(body);
-  if (tab === 'ranking') return rankingView(body);
-}
-
-async function vendorCatalog(body) {
-  const { perfumes } = await api('/api/vendor/perfumes');
-  if (!perfumes.length) {
-    body.innerHTML = '<div class="empty">El administrador aún no ha publicado perfumes.</div>';
-    return;
-  }
-  const draw = (list, opts) => { $('#vGrid').innerHTML = productGrid(list, 'vendor', opts); };
-  const filters = catalogFilters(perfumes, draw);
-  body.innerHTML = `${filters.html}<div id="vGrid"></div>`;
-  filters.bind(body);
-}
-
-// Carrito compartido por clientes y vendedores.
+// Carrito de la tienda.
 function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, onSubmit }) {
   const byId = Object.fromEntries(perfumes.map((p) => [String(p.id), p]));
   const draw = () => {
@@ -823,7 +765,7 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
               <div>
                 <div class="product-brand">${esc(p.brand || '')}</div>
                 <div style="font-family:var(--serif);font-size:1.2rem">${esc(p.name)}${p.size_ml ? ` <span class="muted small">${p.size_ml} ml</span>` : ''}</div>
-                <div class="small muted">${money(price(p))} c/u${commission ? ` · comisión ${money(commission(p))} c/u` : ''}</div>
+                <div class="small muted">${money(price(p))} c/u${p.discount_pct > 0 && p.list_price > price(p) ? ` <s>${money(p.list_price)}</s> <span class="bf-mini">-${fmtPct(p.discount_pct)}%</span>` : ''}${commission ? ` · comisión ${money(commission(p))} c/u` : ''}</div>
               </div>
               <div class="qty">
                 <button type="button" data-step="-1" aria-label="Menos">−</button>
@@ -878,29 +820,6 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
   draw();
 }
 
-async function vendorCart(body) {
-  const { perfumes } = await api('/api/vendor/perfumes');
-  renderCart(body, {
-    perfumes,
-    price: (p) => p.suggested_price,
-    commission: (p) => p.commission,
-    emptyHref: '#/panel',
-    formHtml: `
-      <h3>Datos del cliente</h3>
-      <div class="field"><label for="c-name">Nombre del cliente *</label><input id="c-name" name="client_name" required maxlength="120"></div>
-      <div class="field"><label for="c-phone">Teléfono</label><input id="c-phone" name="client_phone" type="tel"></div>
-      <div class="field"><label for="c-email">Correo del cliente (opcional)</label><input id="c-email" name="client_email" type="email" autocomplete="off" placeholder="Para avisarle el estado del pedido"></div>
-      ${deliveryFields('vendor')}
-      <div class="field"><label for="c-notes">Notas</label><textarea id="c-notes" name="notes"></textarea></div>
-      <button class="btn solid" type="submit">Enviar pedido</button>`,
-    onSubmit: async (payload) => {
-      const { order } = await api('/api/orders', { method: 'POST', body: payload });
-      cart.clear();
-      toast(`Pedido #${order.id} enviado`);
-      location.hash = '#/panel/pedidos';
-    },
-  });
-}
 
 /* =================================================================
    Tienda: carrito del cliente, pago con QR y seguimiento
@@ -1205,72 +1124,6 @@ function orderFilterBar(statuses, current) {
   </div>`;
 }
 
-async function vendorOrders(body, filter = '') {
-  const { orders, statuses } = await api(`/api/orders${filter ? `?status=${filter}` : ''}`);
-  body.innerHTML = `
-    ${orderFilterBar(statuses, filter)}
-    ${orders.length ? `<div class="orders">${orders.map((o) => orderCard(o)).join('')}</div>`
-      : '<div class="empty">No tienes pedidos todavía.<br><br><a class="btn sm" href="#/panel">Armar un pedido</a></div>'}`;
-  $$('[data-filter]', body).forEach((c) => c.addEventListener('click', () => vendorOrders(body, c.dataset.filter)));
-  $$('[data-detail]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, () => showOrderHistory(b.dataset.detail))));
-  $$('[data-cancel]', body).forEach((b) => b.addEventListener('click', () => {
-    if (!confirm('¿Cancelar este pedido?')) return;
-    withBusy(b, async () => {
-      await api(`/api/orders/${b.dataset.cancel}/cancel`, { method: 'POST' });
-      toast('Pedido cancelado');
-      vendorOrders(body, filter);
-    });
-  }));
-}
-
-/* =================================================================
-   Ranking (vendedor y administrador)
-   ================================================================= */
-async function rankingView(body, month = currentMonth()) {
-  const isAdmin = state.user.role === 'admin';
-  const { ranking } = await api(`/api/ranking?month=${month}`);
-  const top = [ranking[1], ranking[0], ranking[2]];
-  const places = ['second', 'first', 'third'];
-  const medals = ['2', '1', '3'];
-  body.innerHTML = `
-    <div class="section-head">
-      <div>
-        <div class="eyebrow">Premio mensual a los 3 mejores</div>
-        <h2 style="text-transform:capitalize">Ranking · ${esc(monthLabel(month))}</h2>
-      </div>
-      <div class="btn-row">
-        <button class="btn sm" data-month="${shiftMonth(month, -1)}">← Anterior</button>
-        <button class="btn sm" data-month="${shiftMonth(month, 1)}" ${month >= currentMonth() ? 'disabled' : ''}>Siguiente →</button>
-      </div>
-    </div>
-    <div class="podium">
-      ${top.map((r, i) => `
-        <div class="podium-place ${places[i]}">
-          <div class="medal">${medals[i]}°</div>
-          <div class="who">${r ? esc(r.name) : '—'}</div>
-          <div class="small muted">${r ? `${money(r.sales)} · ${r.units} uds.` : 'Sin ventas'}</div>
-          <div class="prize" style="margin-top:0.6rem">Premio ${medals[i]}° lugar</div>
-        </div>`).join('')}
-    </div>
-    ${ranking.length ? `
-      <div class="table-wrap"><table class="stack">
-        <thead><tr><th>Vendedor</th><th>Ciudad</th><th class="num">Pedidos</th><th class="num">Unidades</th><th class="num">Ventas</th>${isAdmin ? '<th class="num">Comisión</th>' : ''}</tr></thead>
-        <tbody>
-          ${ranking.map((r) => `
-            <tr class="${r.me ? 'me' : ''}">
-              <td class="cell-title" data-label="#">${r.position}. ${esc(r.name)}${r.me ? ' <span class="badge">Tú</span>' : ''}</td>
-              <td class="muted" data-label="Ciudad">${esc(r.city || '—')}</td>
-              <td class="num" data-label="Pedidos">${r.orders}</td>
-              <td class="num" data-label="Unidades">${r.units}</td>
-              <td class="num" data-label="Ventas">${money(r.sales)}</td>
-              ${isAdmin ? `<td class="num" data-label="Comisión" style="color:var(--gold)">${money(r.commission)}</td>` : ''}
-            </tr>`).join('')}
-        </tbody>
-      </table></div>`
-      : '<div class="empty">Aún no hay pedidos entregados en este mes.</div>'}
-    <p class="small muted" style="margin-top:1rem">El ranking se calcula con el monto de los pedidos <strong>entregados</strong> creados durante el mes.</p>`;
-  $$('[data-month]', body).forEach((b) => b.addEventListener('click', () => rankingView(body, b.dataset.month)));
-}
 
 /* =================================================================
    Panel del administrador
@@ -1281,11 +1134,9 @@ async function viewAdmin(tab) {
   const summary = await api('/api/admin/summary');
   const tabs = [
     ['resumen', 'Resumen'],
-    ['solicitudes', `Vendedores${summary.pendingVendors ? ` (${summary.pendingVendors})` : ''}`],
     ['catalogo', 'Catálogo'],
     ['stock', 'Stock'],
     ['pedidos', `Pedidos${summary.openOrders ? ` (${summary.openOrders})` : ''}`],
-    ['ranking', 'Ranking'],
     ['cuenta', 'Pagos y cuenta'],
   ];
   app.innerHTML = `
@@ -1294,8 +1145,8 @@ async function viewAdmin(tab) {
     <div id="tabBody"></div>`;
   $$('[data-tab]').forEach((b) => b.addEventListener('click', () => viewAdmin(b.dataset.tab)));
   const body = $('#tabBody');
-  const views = { resumen: adminSummary, solicitudes: adminVendors, catalogo: adminPerfumes, stock: adminStock, pedidos: adminOrders, ranking: (b) => rankingView(b), cuenta: adminAccount };
-  await views[tab](body, summary);
+  const views = { resumen: adminSummary, catalogo: adminPerfumes, stock: adminStock, pedidos: adminOrders, cuenta: adminAccount };
+  await (views[tab] || views.resumen)(body, summary);
 }
 
 function adminSummary(body, s) {
@@ -1306,14 +1157,24 @@ function adminSummary(body, s) {
         <div class="eyebrow" style="margin:0">Estado de la tienda</div>
         <h3 style="margin:0.3rem 0">${soon ? '🔒 Modo "Próximamente"' : '🟢 Abierta al público'}</h3>
         <p class="small muted" style="margin:0">${soon
-          ? 'Los visitantes ven una pantalla de "Muy pronto". Tú sigues entrando y trabajando normalmente. No se reciben pedidos ni registros de vendedores.'
-          : 'Cualquier persona puede ver el catálogo, hacer pedidos y registrarse como vendedor.'}</p>
+          ? 'Los visitantes ven una pantalla de "Muy pronto". Tú sigues entrando y trabajando normalmente. No se reciben pedidos.'
+          : 'Cualquier persona puede ver el catálogo y hacer pedidos.'}</p>
       </div>
       <button class="btn ${soon ? 'solid' : ''}" id="launchToggle">${soon ? 'Abrir la tienda al público' : 'Poner en "Próximamente"'}</button>
     </div>
+    <form class="card bf-card ${settingsCache?.black_friday === '1' ? 'is-on' : ''}" id="bfForm">
+      <div>
+        <div class="eyebrow" style="margin:0">Campaña</div>
+        <h3 style="margin:0.3rem 0">🖤 Black Friday ${settingsCache?.black_friday === '1' ? (bfActive() ? '· <span class="bf-red">Activo</span>' : '· terminó') : '· apagado'}</h3>
+        <p class="small muted" style="margin:0">Cambia la página al diseño Black Friday con cuenta regresiva y la sección de ofertas. Los descuentos se ponen en cada perfume (Catálogo → Descuento %).</p>
+      </div>
+      <div class="bf-controls">
+        <label class="checkbox"><input type="checkbox" name="black_friday" ${settingsCache?.black_friday === '1' ? 'checked' : ''}> Diseño Black Friday encendido</label>
+        <div class="field" style="margin:0"><label for="bf-end">Termina el</label><input type="datetime-local" id="bf-end" name="black_friday_end" value="${esc(settingsCache?.black_friday_end || '2026-11-30T23:59')}"></div>
+        <button class="btn solid" type="submit">Guardar</button>
+      </div>
+    </form>
     <div class="stats">
-      <div class="stat"><div class="lbl">Solicitudes pendientes</div><div class="val">${s.pendingVendors}</div></div>
-      <div class="stat"><div class="lbl">Vendedores activos</div><div class="val">${s.approvedVendors}</div></div>
       <div class="stat"><div class="lbl">Perfumes publicados</div><div class="val">${s.activePerfumes}</div></div>
       <div class="stat"><div class="lbl">Pedidos en curso</div><div class="val">${s.openOrders}</div></div>
       <div class="stat"><div class="lbl">Pedidos de clientes en curso</div><div class="val">${s.openCustomerOrders}</div></div>
@@ -1329,12 +1190,20 @@ function adminSummary(body, s) {
         <button class="btn sm" data-go="catalogo">Reponer stock</button>
       </div>` : ''}
     <div class="btn-row">
-      <button class="btn" data-go="solicitudes">Revisar solicitudes</button>
       <button class="btn" data-go="catalogo">Agregar perfume</button>
       <button class="btn" data-go="pedidos">Gestionar pedidos</button>
-      <button class="btn" data-go="ranking">Ver ranking</button>
     </div>`;
   $$('[data-go]', body).forEach((b) => b.addEventListener('click', () => viewAdmin(b.dataset.go)));
+  $('#bfForm', body).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = e.target;
+    withBusy(e.submitter, async () => {
+      settingsCache = (await api('/api/admin/settings', { method: 'PUT', body: { black_friday: f.black_friday.checked, black_friday_end: f.black_friday_end.value } })).settings;
+      applyBlackFriday();
+      toast(f.black_friday.checked ? 'Black Friday encendido 🖤' : 'Black Friday apagado');
+      viewAdmin('resumen');
+    });
+  });
   $('#launchToggle', body).addEventListener('click', (e) => {
     const goSoon = !soon;
     if (!confirm(goSoon
@@ -1348,50 +1217,6 @@ function adminSummary(body, s) {
   });
 }
 
-async function adminVendors(body, _s, filter = '') {
-  const { vendors } = await api(`/api/admin/vendors${filter ? `?status=${filter}` : ''}`);
-  body.innerHTML = `
-    <div class="chips" style="margin-bottom:1.2rem">
-      ${[['', 'Todos'], ['pending', 'Pendientes'], ['approved', 'Aprobados'], ['rejected', 'Rechazados']]
-        .map(([k, l]) => `<button class="chip ${k === filter ? 'active' : ''}" data-filter="${k}">${l}</button>`).join('')}
-    </div>
-    ${vendors.length ? `
-      <div class="table-wrap"><table class="stack">
-        <thead><tr><th>Vendedor</th><th>Contacto</th><th>Mensaje</th><th>Registro</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
-        <tbody>
-          ${vendors.map((v) => `
-            <tr>
-              <td class="cell-title"><strong>${esc(v.name)}</strong><div class="small muted">${esc(v.city || '')}</div></td>
-              <td class="small" data-label="Contacto">${esc(v.email)}<div class="muted">${esc(v.phone || '')}</div></td>
-              <td class="small muted" data-label="Mensaje" style="max-width:260px">${esc(v.message || '—')}</td>
-              <td class="small muted" data-label="Registro">${fmtDate(v.created_at)}</td>
-              <td data-label="Estado">${badge(v.status, VENDOR_STATUS_LABELS)}<div class="small muted">${v.orders} pedidos</div></td>
-              <td class="num cell-actions">
-                <div class="btn-row" style="justify-content:flex-end">
-                  ${v.status !== 'approved' ? `<button class="btn sm ok" data-set="approved" data-id="${v.id}">Aceptar</button>` : ''}
-                  ${v.status !== 'rejected' ? `<button class="btn sm danger" data-set="rejected" data-id="${v.id}">${v.status === 'approved' ? 'Suspender' : 'Rechazar'}</button>` : ''}
-                  ${v.status === 'rejected' ? `<button class="btn sm ghost danger" data-delete="${v.id}">Eliminar</button>` : ''}
-                </div>
-              </td>
-            </tr>`).join('')}
-        </tbody>
-      </table></div>`
-      : '<div class="empty">No hay vendedores en esta lista.</div>'}`;
-  $$('[data-filter]', body).forEach((c) => c.addEventListener('click', () => adminVendors(body, null, c.dataset.filter)));
-  $$('[data-set]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, async () => {
-    await api(`/api/admin/vendors/${b.dataset.id}`, { method: 'PATCH', body: { status: b.dataset.set } });
-    toast(b.dataset.set === 'approved' ? 'Vendedor aceptado' : 'Vendedor actualizado');
-    await viewAdmin('solicitudes');
-  })));
-  $$('[data-delete]', body).forEach((b) => b.addEventListener('click', () => {
-    if (!confirm('¿Eliminar este vendedor y todos sus pedidos? Esta acción no se puede deshacer.')) return;
-    withBusy(b, async () => {
-      await api(`/api/admin/vendors/${b.dataset.delete}`, { method: 'DELETE' });
-      toast('Vendedor eliminado');
-      await viewAdmin('solicitudes');
-    });
-  }));
-}
 
 // Búsqueda del catálogo del administrador (se conserva al guardar cambios).
 let catalogQuery = '';
@@ -1421,7 +1246,7 @@ async function adminPerfumes(body) {
       </div>
       <div class="empty" id="catNone" hidden>Ningún perfume coincide con la búsqueda.</div>
       <div class="table-wrap"><table class="stack">
-        <thead><tr><th></th><th>Perfume</th><th>Categoría</th><th class="num">Precio</th><th class="num">Comisión</th><th class="num">Stock</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
+        <thead><tr><th></th><th>Perfume</th><th>Categoría</th><th class="num">Precio</th><th class="num">Descuento</th><th class="num">Stock</th><th>Estado</th><th class="num">Acciones</th></tr></thead>
         <tbody>
           ${perfumes.map((p) => `
             <tr data-row-id="${p.id}" data-search="${esc(`${p.name} ${p.brand || ''} ${p.category || ''}`.toLowerCase())}">
@@ -1430,7 +1255,8 @@ async function adminPerfumes(body) {
                 <button type="button" class="best-toggle ${p.bestseller ? 'on' : ''}" data-best="${p.id}" title="Mostrar en «Los más vendidos» del inicio">${p.bestseller ? '★ Más vendido' : '☆ Marcar como más vendido'}</button></td>
               <td class="muted" data-label="Categoría">${esc(p.category || '—')}</td>
               <td class="num" data-label="Precio">${money(p.suggested_price)}</td>
-              <td class="num" data-label="Comisión" style="color:var(--gold)">${money(p.commission)}</td>
+              <td class="num" data-label="Descuento"><div class="disc-ctl"><input type="number" min="0" max="90" step="0.5" value="${p.discount_pct > 0 ? p.discount_pct : ''}" placeholder="0" data-disc="${p.id}" aria-label="Descuento en %"><span>%</span></div>
+                ${p.discount_pct > 0 ? `<div class="small bf-red">${money(Math.round(p.suggested_price * (100 - p.discount_pct)) / 100)}</div>` : ''}</td>
               <td class="num" data-label="Stock">${stockControl(p)}</td>
               <td data-label="Estado">${p.active ? '<span class="badge approved">Publicado</span>' : '<span class="badge">Oculto</span>'}</td>
               <td class="num cell-actions"><div class="btn-row" style="justify-content:flex-end">
@@ -1463,6 +1289,12 @@ async function adminPerfumes(body) {
     await api(`/api/admin/perfumes/${b.dataset.best}/bestseller`, { method: 'PATCH', body: { bestseller: on } });
     toast(on ? 'Agregado a «Los más vendidos»' : 'Quitado de «Los más vendidos»');
     reloadCatalog(b.dataset.best);
+  })));
+  // Descuento directo desde la tabla.
+  $$('[data-disc]', body).forEach((input) => input.addEventListener('change', () => withBusy(null, async () => {
+    await api(`/api/admin/perfumes/${input.dataset.disc}/discount`, { method: 'PATCH', body: { discount_pct: input.value } });
+    toast(Number(input.value) > 0 ? `Descuento de ${fmtPct(input.value)}% aplicado` : 'Descuento quitado');
+    reloadCatalog(input.dataset.disc);
   })));
   // Botones − / + del inventario y edición directa del número.
   $$('[data-stock-id]', body).forEach((box) => {
@@ -1576,7 +1408,7 @@ async function adminStock(body) {
             </tr>`).join('')}
         </tbody>
       </table></div>
-      <p class="small muted">Los cambios se guardan solos al salir de cada casilla. <strong>Mi precio venta</strong> es tu precio propio: no cambia el precio de la página ni las comisiones de los vendedores (si lo dejas vacío se usa el de la página). Ganancia c/u = mi precio de venta − precio de compra. "Vendidos" = en la página · fuera de la página.</p>`
+      <p class="small muted">Los cambios se guardan solos al salir de cada casilla. <strong>Mi precio venta</strong> es tu precio propio: no cambia el precio de la página (si lo dejas vacío se usa el de la página). Ganancia c/u = mi precio de venta − precio de compra. "Vendidos" = en la página · fuera de la página.</p>`
       : '<div class="empty">Aún no hay perfumes. Agrégalos en la pestaña Catálogo.</div>'}`;
 
   // Guardar cada casilla al cambiarla.
@@ -1766,7 +1598,9 @@ function perfumeForm(p = {}) {
         </div>
         <div class="field"><label for="p-size">Tamaño (ml)</label><input id="p-size" name="size_ml" type="number" min="1" value="${esc(p.size_ml || '')}"></div>
         <div class="field"><label for="p-price">Precio de venta (Bs) *</label><input id="p-price" name="suggested_price" type="number" min="0" step="0.01" required value="${esc(p.suggested_price ?? '')}"></div>
-        <div class="field"><label for="p-comm">Comisión del vendedor (Bs) *</label><input id="p-comm" name="commission" type="number" min="0" step="0.01" required value="${esc(p.commission ?? '')}"></div>
+        <div class="field"><label for="p-disc">Descuento (%)</label><input id="p-disc" name="discount_pct" type="number" min="0" max="90" step="0.5" value="${p.discount_pct > 0 ? esc(p.discount_pct) : ''}" placeholder="Ej: 20">
+          <span class="small muted" id="p-final"></span></div>
+        <input type="hidden" name="commission" value="${esc(p.commission ?? 0)}">
         <div class="field"><label for="p-cost">Precio de compra (Bs)</label><input id="p-cost" name="cost" type="number" min="0" step="0.01" value="${esc(p.cost ?? '')}" placeholder="Solo lo ves tú"></div>
         <div class="field"><label for="p-stock">Unidades en stock</label><input id="p-stock" name="stock" type="number" min="0" step="1" value="${esc(p.stock ?? '')}" placeholder="Ej: 10">
           <span class="small muted">Baja sola con cada pedido. Déjalo vacío si no quieres controlar el stock.</span></div>
@@ -1786,6 +1620,17 @@ function perfumeForm(p = {}) {
       </div>
     </form>`);
 
+  // Vista previa del precio con descuento.
+  const showFinal = () => {
+    const price = Number($('#p-price', root).value) || 0;
+    const pct = Math.min(90, Math.max(0, Number($('#p-disc', root).value) || 0));
+    $('#p-final', root).innerHTML = pct && price
+      ? `Precio con descuento: <strong class="bf-red">${money(Math.round(price * (100 - pct)) / 100)}</strong> · se verá la etiqueta roja en el catálogo`
+      : 'Déjalo vacío o en 0 si no tiene descuento.';
+  };
+  $('#p-price', root).addEventListener('input', showFinal);
+  $('#p-disc', root).addEventListener('input', showFinal);
+  showFinal();
   const imgInput = $('#p-img', root);
   const preview = $('#p-preview', root);
   imgInput.addEventListener('input', () => {
@@ -1831,10 +1676,6 @@ async function adminOrders(body, _s, filter = '', source = '') {
     return adminOrders(body, null, filter, source);
   };
   body.innerHTML = `
-    <div class="chips" style="margin-bottom:0.6rem">
-      ${[['', 'Todos los pedidos'], ['cliente', 'Clientes directos'], ['vendedor', 'De vendedores']]
-        .map(([k, l]) => `<button class="chip ${k === source ? 'active' : ''}" data-source="${k}">${l}</button>`).join('')}
-    </div>
     ${orderFilterBar(statuses, filter)}
     ${orders.length ? `
       <div class="bulk-bar">
@@ -1910,7 +1751,7 @@ async function adminOrders(body, _s, filter = '', source = '') {
       <div class="eyebrow">Pedido #${esc(id)}</div>
       <h3>Cambiar estado a ${badge(status)}</h3>
       <form class="form" id="statusForm">
-        <div class="field"><label for="s-note">Nota (la verá el cliente o el vendedor, opcional)</label><textarea id="s-note" name="note" placeholder="Ej: sale hoy por la tarde, número de guía…"></textarea></div>
+        <div class="field"><label for="s-note">Nota (la verá el cliente, opcional)</label><textarea id="s-note" name="note" placeholder="Ej: sale hoy por la tarde, número de guía…"></textarea></div>
         <div class="btn-row"><button class="btn solid" type="submit">Confirmar</button><button class="btn ghost" type="button" id="cancelStatus">Cancelar</button></div>
       </form>`);
     $('#cancelStatus', root).addEventListener('click', closeModal);
@@ -1943,7 +1784,7 @@ async function renderShareCard(card) {
   let publicPart;
   if (share.public) {
     publicPart = `
-      <p class="small muted" style="margin:0">Ábrelo en cualquier celular, con Wi-Fi o datos móviles. Puedes mandárselo a clientes y vendedores.
+      <p class="small muted" style="margin:0">Ábrelo en cualquier celular, con Wi-Fi o datos móviles. Puedes mandárselo a tus clientes.
         Funciona mientras la ventana negra esté abierta y cambia cada vez que abres <strong style="color:var(--fg)">COMPARTIR.bat</strong>.</p>
       ${linkRow(share.public)}`;
   } else if (share.sharing) {
@@ -2284,33 +2125,58 @@ $('#year').textContent = new Date().getFullYear();
   } catch { /* sin sesión */ }
   // El botón flotante usa el número de WhatsApp configurado en Pagos y cuenta.
   if (settingsCache?.whatsapp) $('#waFloat').href = waLink(settingsCache.whatsapp, 'Hola Distinto SCZ, quiero información sobre sus perfumes.');
+  applyBlackFriday();
   router();
 })();
 
 /* ---- Cuenta regresiva para el lanzamiento (hora de Bolivia, UTC-4) ---- */
-const LAUNCH_AT = new Date('2026-10-10T20:00:00-04:00');
+/* ---- Black Friday ---- */
+// Activo si el administrador lo encendió y aún no llegó la fecha de fin (hora de Bolivia).
+function bfEnd() {
+  return new Date(`${settingsCache?.black_friday_end || '2026-11-30T23:59'}:00-04:00`);
+}
+function bfActive() {
+  return settingsCache?.black_friday === '1' && Date.now() < bfEnd();
+}
+function fmtEnd(d) {
+  return d.toLocaleString('es-BO', { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', timeZone: 'America/La_Paz' });
+}
+// Barra superior y colores de Black Friday en toda la página.
+function applyBlackFriday() {
+  const on = bfActive();
+  document.body.classList.toggle('bf-mode', on);
+  const bar = $('#bfBar');
+  if (!bar) return;
+  bar.hidden = !on;
+  if (!on) return;
+  const item = '<span>BLACK FRIDAY</span><span class="dot">✦</span><span>Descuentos en perfumes originales</span><span class="dot">✦</span><span>Paga con QR</span><span class="dot">✦</span><span>Envíos a toda Bolivia</span><span class="dot">✦</span>';
+  bar.innerHTML = `<a href="#/catalogo?ofertas" class="bf-bar-track">${item.repeat(4)}</a>`;
+}
+
+/* ---- Cuenta regresiva ---- */
 let countdownTimer = null;
 
-function countdownHTML() {
-  if (Date.now() >= LAUNCH_AT) return '';
+function countdownHTML(target, title) {
+  if (!target || Date.now() >= target) return '';
   const unit = (key, label) => `<div class="cd-unit"><span class="cd-num" data-cd="${key}">00</span><span class="cd-label">${label}</span></div>`;
   return `
-    <div class="countdown" id="countdown">
-      <div class="cd-title">Lanzamiento oficial · sábado 10 de octubre, 8:00 p.m.</div>
+    <div class="countdown" id="countdown" data-target="${target.getTime()}">
+      <div class="cd-title">${title}</div>
       <div class="cd-units">${unit('d', 'Días')}<span class="cd-sep">:</span>${unit('h', 'Horas')}<span class="cd-sep">:</span>${unit('m', 'Minutos')}<span class="cd-sep">:</span>${unit('s', 'Segundos')}</div>
     </div>`;
 }
 
-function startCountdown() {
+function startCountdown(doneText = '¡La oferta terminó!') {
   clearInterval(countdownTimer);
   const box = document.getElementById('countdown');
   if (!box) return;
+  const target = Number(box.dataset.target);
   const tick = () => {
     if (!document.body.contains(box)) { clearInterval(countdownTimer); return; }
-    const left = Math.max(0, LAUNCH_AT - Date.now());
+    const left = Math.max(0, target - Date.now());
     if (!left) {
       clearInterval(countdownTimer);
-      box.innerHTML = '<div class="cd-title">¡Ya abrimos!</div>';
+      box.innerHTML = `<div class="cd-title">${doneText}</div>`;
       return;
     }
     const sec = Math.floor(left / 1000);
@@ -2337,10 +2203,8 @@ function viewComingSoon() {
       <h1 class="hero-name">DISTINTO SCZ</h1>
       <div class="hero-tag"><span class="typed" id="typed"></span></div>
       <p class="muted">Estamos preparando una nueva experiencia en fragancias originales.<br>Muy pronto podrás hacer tus pedidos aquí.</p>
-      ${countdownHTML()}
       ${wa ? `<a class="btn solid" href="${esc(wa)}" target="_blank" rel="noopener">Escríbenos por WhatsApp</a>` : ''}
       <a class="soon-login" href="#/login">Acceso</a>
     </section>`;
   typeWriter($('#typed'), 'Tu fragancia, tu sello', 600);
-  startCountdown();
 }
