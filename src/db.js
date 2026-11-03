@@ -185,6 +185,35 @@ db.exec(`
 if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'discount_pct')) {
   db.exec('ALTER TABLE perfumes ADD COLUMN discount_pct REAL NOT NULL DEFAULT 0');
 }
+// Lotes de compra: cada compra guarda cuántas unidades quedan ("remaining") y cada venta anota de qué lotes salió,
+// así la ganancia usa el precio real al que se compró cada unidad (las más antiguas se venden primero).
+if (!db.prepare('PRAGMA table_info(purchases)').all().some((c) => c.name === 'remaining')) {
+  db.exec('ALTER TABLE purchases ADD COLUMN remaining INTEGER NOT NULL DEFAULT 0');
+  // Al activar los lotes: el stock actual de cada perfume se reparte en sus compras más recientes.
+  const perfumes = db.prepare('SELECT id, stock FROM perfumes WHERE stock > 0').all();
+  const lots = db.prepare('SELECT id, quantity FROM purchases WHERE perfume_id = ? ORDER BY purchased_at DESC, id DESC');
+  const setRemaining = db.prepare('UPDATE purchases SET remaining = ? WHERE id = ?');
+  for (const p of perfumes) {
+    let left = p.stock;
+    for (const lot of lots.all(p.id)) {
+      if (left <= 0) break;
+      const r = Math.min(left, lot.quantity);
+      setRemaining.run(r, lot.id);
+      left -= r;
+    }
+  }
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS lot_allocations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    source      TEXT NOT NULL,      -- 'item' (pedido de la página) o 'manual' (venta fuera de la página)
+    source_id   INTEGER NOT NULL,
+    purchase_id INTEGER,            -- NULL = unidades sin compra registrada (se usa el precio de compra del perfume)
+    qty         INTEGER NOT NULL,
+    unit_cost   REAL
+  );
+  CREATE INDEX IF NOT EXISTS idx_alloc_source ON lot_allocations(source, source_id);
+`);
 // Registro de movimientos: ventas, devoluciones, compras y eliminaciones (para poder rastrear todo).
 db.exec(`
   CREATE TABLE IF NOT EXISTS activity (

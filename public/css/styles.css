@@ -1138,3 +1138,8 @@ body.bf-mode .pay-card { border-color: rgba(255, 43, 67, 0.6); }
   .sh-stats { grid-template-columns: 1fr 1fr; }
   .sh-sep { display: none; }
 }
+
+/* ---- Lotes de compra ---- */
+.lots { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
+.lot { padding: 0.12rem 0.55rem; border: 1px solid var(--line-soft); border-radius: 999px; font-size: 0.7rem; color: var(--fg); white-space: nowrap; }
+.lot em { font-style: normal; color: var(--ok); }

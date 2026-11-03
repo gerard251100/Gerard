@@ -371,6 +371,50 @@ function loadOrder(id) {
 // Al crear un pedido se descuentan las unidades; si se cancela (o se elimina sin entregar) vuelven al stock.
 const noStock = (name) => `Ya no quedan existencias de ${name}`;
 
+// ---- Lotes (costo real de cada unidad vendida)
+
+// Saca 'qty' unidades de los lotes del perfume (primero los más antiguos) y devuelve el costo promedio por unidad.
+function consumeLots(perfumeId, qty, source, sourceId) {
+  if (!perfumeId || qty <= 0) return null;
+  const p = db.prepare('SELECT cost FROM perfumes WHERE id = ?').get(perfumeId);
+  const lots = db.prepare('SELECT id, remaining, unit_cost FROM purchases WHERE perfume_id = ? AND remaining > 0 ORDER BY purchased_at, id').all(perfumeId);
+  const ins = db.prepare('INSERT INTO lot_allocations (source, source_id, purchase_id, qty, unit_cost) VALUES (?, ?, ?, ?, ?)');
+  const use = db.prepare('UPDATE purchases SET remaining = remaining - ? WHERE id = ?');
+  let left = qty;
+  for (const lot of lots) {
+    if (!left) break;
+    const take = Math.min(left, lot.remaining);
+    use.run(take, lot.id);
+    ins.run(source, sourceId, lot.id, take, lot.unit_cost);
+    left -= take;
+  }
+  // Unidades sin compra registrada: se costean con el precio de compra del perfume.
+  if (left) ins.run(source, sourceId, null, left, p?.cost ?? null);
+  return allocCost(source, sourceId);
+}
+
+// Costo promedio por unidad de lo que quedó asignado a una venta (null si no se conoce).
+function allocCost(source, sourceId) {
+  const rows = db.prepare('SELECT qty, unit_cost FROM lot_allocations WHERE source = ? AND source_id = ?').all(source, sourceId);
+  const qty = rows.reduce((n, r) => n + r.qty, 0);
+  if (!qty || rows.some((r) => r.unit_cost == null)) return null;
+  return Math.round((rows.reduce((n, r) => n + r.qty * r.unit_cost, 0) / qty) * 100) / 100;
+}
+
+// Devuelve unidades a sus lotes de origen (todas si qty es null).
+function releaseLots(source, sourceId, qty = null) {
+  let left = qty == null ? Infinity : qty;
+  const rows = db.prepare('SELECT * FROM lot_allocations WHERE source = ? AND source_id = ? ORDER BY id DESC').all(source, sourceId);
+  for (const a of rows) {
+    if (left <= 0) break;
+    const give = Math.min(left, a.qty);
+    if (a.purchase_id) db.prepare('UPDATE purchases SET remaining = remaining + ? WHERE id = ?').run(give, a.purchase_id);
+    if (give === a.qty) db.prepare('DELETE FROM lot_allocations WHERE id = ?').run(a.id);
+    else db.prepare('UPDATE lot_allocations SET qty = qty - ? WHERE id = ?').run(give, a.id);
+    left -= give;
+  }
+}
+
 function takeStock(orderId) {
   const items = db.prepare('SELECT perfume_id, perfume_name, SUM(quantity) AS qty FROM order_items WHERE order_id = ? GROUP BY perfume_id').all(orderId);
   const getStock = db.prepare('SELECT stock, availability FROM perfumes WHERE id = ?');
@@ -384,6 +428,12 @@ function takeStock(orderId) {
     }
     take.run(it.qty, it.perfume_id);
   }
+  // Costo real de cada línea según los lotes de compra.
+  const setCost = db.prepare('UPDATE order_items SET unit_cost = ? WHERE id = ?');
+  for (const it of db.prepare('SELECT id, perfume_id, quantity, unit_cost FROM order_items WHERE order_id = ?').all(orderId)) {
+    const cost = consumeLots(it.perfume_id, it.quantity, 'item', it.id);
+    if (cost != null) setCost.run(cost, it.id);
+  }
   db.prepare('UPDATE orders SET stock_taken = 1 WHERE id = ?').run(orderId);
 }
 
@@ -393,6 +443,7 @@ function returnStock(orderId) {
   const items = db.prepare('SELECT perfume_id, SUM(quantity) AS qty FROM order_items WHERE order_id = ? GROUP BY perfume_id').all(orderId);
   const give = db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL');
   for (const it of items) if (it.perfume_id) give.run(it.qty, it.perfume_id);
+  for (const it of db.prepare('SELECT id FROM order_items WHERE order_id = ?').all(orderId)) releaseLots('item', it.id);
   db.prepare('UPDATE orders SET stock_taken = 0 WHERE id = ?').run(orderId);
 }
 
@@ -683,6 +734,7 @@ function deleteOrders(ids) {
       if (o) logActivity('pedido borrado', `Se borró el pedido #${o.id} de ${o.client_name} (${o.created_at.slice(0, 10)}): ${linesText(getLines.all(id), 'unit_price')}`, -o.total);
       // Un pedido eliminado sin entregar (por ejemplo, de prueba) devuelve sus unidades al inventario.
       if (getStatus.get(id)?.status !== 'entregado') returnStock(id);
+      db.prepare("DELETE FROM lot_allocations WHERE source = 'item' AND source_id IN (SELECT id FROM order_items WHERE order_id = ?)").run(id);
       n += Number(del.run(id).changes);
     }
     // Si ya no queda ningún pedido, la numeración vuelve a empezar en #1.
@@ -730,7 +782,10 @@ route('POST', '/api/orders/:id/return', async (ctx) => {
   transaction(() => {
     if (order.stock_taken) {
       const give = db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL');
-      for (const r of returns) if (r.it.perfume_id) give.run(r.qty, r.it.perfume_id);
+      for (const r of returns) {
+        if (r.it.perfume_id) give.run(r.qty, r.it.perfume_id);
+        releaseLots('item', r.it.id, r.qty); // vuelven a su lote de compra
+      }
     }
     if (all) {
       // Devolución total: el pedido queda cancelado (no cuenta en reportes ni ranking).
@@ -739,7 +794,11 @@ route('POST', '/api/orders/:id/return', async (ctx) => {
     } else {
       for (const r of returns) {
         if (r.qty === r.it.quantity) db.prepare('DELETE FROM order_items WHERE id = ?').run(r.it.id);
-        else db.prepare('UPDATE order_items SET quantity = quantity - ? WHERE id = ?').run(r.qty, r.it.id);
+        else {
+          db.prepare('UPDATE order_items SET quantity = quantity - ? WHERE id = ?').run(r.qty, r.it.id);
+          const cost = allocCost('item', r.it.id);
+          if (cost != null) db.prepare('UPDATE order_items SET unit_cost = ? WHERE id = ?').run(cost, r.it.id);
+        }
       }
       const t = db.prepare('SELECT COALESCE(SUM(quantity * unit_price), 0) AS total, COALESCE(SUM(quantity * unit_commission), 0) AS comm FROM order_items WHERE order_id = ?').get(id);
       db.prepare(`UPDATE orders SET total = ?, total_commission = ?, updated_at = datetime('now') WHERE id = ?`)
@@ -1133,6 +1192,9 @@ route('GET', '/api/admin/inventory', async (ctx) => {
             (SELECT MAX(purchased_at) FROM purchases WHERE perfume_id = p.id) AS last_purchase
      FROM perfumes p ORDER BY p.brand, p.name`
   ).all();
+  // Lotes que aún tienen unidades, para ver a qué precio se compró lo que queda en stock.
+  const lots = db.prepare('SELECT perfume_id, remaining, unit_cost, purchased_at FROM purchases WHERE remaining > 0 ORDER BY purchased_at, id').all();
+  for (const p of perfumes) p.lots = lots.filter((l) => l.perfume_id === p.id).map(({ remaining, unit_cost, purchased_at }) => ({ remaining, unit_cost, purchased_at }));
   // Últimas ventas y compras, agrupadas por ticket (una operación puede tener varios perfumes).
   const group = (rows, dateKey) => {
     const map = new Map();
@@ -1207,7 +1269,9 @@ route('POST', '/api/admin/manual-sales', async (ctx) => {
       const { stock } = getStock.get(p.id);
       if (stock != null && stock < qty) warnings.push(`${p.name}: el stock quedó en ${stock - qty}. Revisa su stock.`);
       take.run(qty, p.id);
-      insert.run(ticket, p.id, label, p.brand || '', qty, price, p.cost ?? null, soldAt, text(b.note, 200));
+      const { lastInsertRowid } = insert.run(ticket, p.id, label, p.brand || '', qty, price, p.cost ?? null, soldAt, text(b.note, 200));
+      const cost = consumeLots(p.id, qty, 'manual', lastInsertRowid);
+      if (cost != null) db.prepare('UPDATE manual_sales SET unit_cost = ? WHERE id = ?').run(cost, lastInsertRowid);
     }
     const total = lines.reduce((n, l) => n + l.qty * l.price, 0);
     logActivity('venta', `Venta fuera de la página del ${soldAt}: ${linesText(lines, 'price')}${b.note ? ` · ${text(b.note, 200)}` : ''}`, total);
@@ -1226,6 +1290,7 @@ route('DELETE', '/api/admin/manual-sales/:id', async (ctx) => {
     const give = db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL');
     for (const r of rows) {
       if (r.perfume_id) give.run(r.quantity, r.perfume_id);
+      releaseLots('manual', r.id);
       db.prepare('DELETE FROM manual_sales WHERE id = ?').run(r.id);
     }
     logActivity('venta borrada', `Se borró la venta del ${sale.sold_at}: ${linesText(rows, 'unit_price')}`, -rows.reduce((n, r) => n + r.quantity * r.unit_price, 0));
@@ -1247,8 +1312,13 @@ route('POST', '/api/admin/manual-sales/return', async (ctx) => {
       if (!row) throw new HttpError(404, 'Venta no encontrada');
       if (r.qty > row.quantity) throw new HttpError(400, `Cantidad inválida para ${row.perfume_name}`);
       if (row.perfume_id) give.run(r.qty, row.perfume_id);
+      releaseLots('manual', row.id, r.qty);
       if (r.qty === row.quantity) db.prepare('DELETE FROM manual_sales WHERE id = ?').run(row.id);
-      else db.prepare('UPDATE manual_sales SET quantity = quantity - ? WHERE id = ?').run(r.qty, row.id);
+      else {
+        db.prepare('UPDATE manual_sales SET quantity = quantity - ? WHERE id = ?').run(r.qty, row.id);
+        const cost = allocCost('manual', row.id);
+        if (cost != null) db.prepare('UPDATE manual_sales SET unit_cost = ? WHERE id = ?').run(cost, row.id);
+      }
       logActivity('devolución', `Devolución de la venta del ${row.sold_at}: ${r.qty} × ${row.perfume_name}`, -r.qty * row.unit_price);
     }
   });
@@ -1265,12 +1335,14 @@ route('POST', '/api/admin/purchases', async (ctx) => {
   transaction(() => {
     const add = db.prepare('UPDATE perfumes SET stock = COALESCE(stock, 0) + ?, cost = ? WHERE id = ?');
     const insert = db.prepare(
-      `INSERT INTO purchases (ticket, perfume_id, perfume_name, brand, quantity, unit_cost, purchased_at, supplier)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO purchases (ticket, perfume_id, perfume_name, brand, quantity, unit_cost, purchased_at, supplier, remaining)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const { p, qty, price, label } of lines) {
+      // Si había unidades vendidas por adelantado (stock negativo), esta compra las cubre primero.
+      const owed = Math.max(0, -(db.prepare('SELECT stock FROM perfumes WHERE id = ?').get(p.id).stock || 0));
       add.run(qty, price, p.id);
-      insert.run(ticket, p.id, label, p.brand || '', qty, price, day, text(b.supplier, 120));
+      insert.run(ticket, p.id, label, p.brand || '', qty, price, day, text(b.supplier, 120), Math.max(0, qty - owed));
     }
     logActivity('compra', `Compra del ${day}: ${linesText(lines, 'price')}${b.supplier ? ` · ${text(b.supplier, 120)}` : ''}`, lines.reduce((n, l) => n + l.qty * l.price, 0));
   });
@@ -1287,6 +1359,7 @@ route('DELETE', '/api/admin/purchases/:id', async (ctx) => {
     const takeBack = db.prepare('UPDATE perfumes SET stock = MAX(0, stock - ?) WHERE id = ? AND stock IS NOT NULL');
     for (const r of rows) {
       if (r.perfume_id) takeBack.run(r.quantity, r.perfume_id);
+      db.prepare('UPDATE lot_allocations SET purchase_id = NULL WHERE purchase_id = ?').run(r.id); // las ventas conservan su costo
       db.prepare('DELETE FROM purchases WHERE id = ?').run(r.id);
     }
     logActivity('compra borrada', `Se borró la compra del ${row.purchased_at}: ${linesText(rows, 'unit_cost')}`);
@@ -1382,6 +1455,10 @@ route('GET', '/api/admin/report', async (ctx) => {
 
   const perfumeInfo = new Map(db.prepare('SELECT id, name, brand, size_ml, category, cost, store_price, suggested_price FROM perfumes').all().map((p) => [p.id, p]));
   // Última compra del perfume hasta la fecha de la venta (fecha, precio y proveedor).
+  const lotsOf = db.prepare(
+    `SELECT a.qty, a.unit_cost, pu.purchased_at, pu.supplier FROM lot_allocations a
+     LEFT JOIN purchases pu ON pu.id = a.purchase_id WHERE a.source = ? AND a.source_id = ? ORDER BY pu.purchased_at, a.id`
+  );
   const lastBuy = db.prepare(
     `SELECT purchased_at, unit_cost, supplier FROM purchases
      WHERE perfume_id = ? AND purchased_at <= ? ORDER BY purchased_at DESC, id DESC LIMIT 1`
@@ -1391,7 +1468,7 @@ route('GET', '/api/admin/report', async (ctx) => {
   const web = db.prepare(
     `SELECT o.id AS order_id, datetime(o.created_at, 'localtime') AS created, o.client_name, o.client_phone, o.source, o.status,
             o.payment_status, o.delivery_method, o.delivery_city, u.name AS vendor_name, o.legacy_vendor,
-            i.perfume_name, i.perfume_id, i.quantity, i.unit_price, i.unit_commission,
+            i.id AS item_id, i.perfume_name, i.perfume_id, i.quantity, i.unit_price, i.unit_commission,
             COALESCE(i.unit_cost, p.cost) AS unit_cost
      FROM order_items i
      JOIN orders o ON o.id = i.order_id
@@ -1401,6 +1478,8 @@ route('GET', '/api/admin/report', async (ctx) => {
      ORDER BY o.created_at, o.id, i.id`
   ).all(from, to).map((l) => ({
     ...l,
+    src: 'item',
+    src_id: l.item_id,
     ref: `Pedido #${l.order_id}`,
     channel: l.source === 'cliente' ? 'Página (cliente)' : 'Página (vendedor)',
     vendor: l.source === 'cliente' ? '' : l.vendor_name || l.legacy_vendor || '—',
@@ -1422,15 +1501,31 @@ route('GET', '/api/admin/report', async (ctx) => {
     return {
       order_id: null, created: `${m.sold_at} `, ref: `Venta directa ${tickets.get(key)}`, channel: 'Fuera de la página', vendor: '',
       who: m.note || '', perfume_name: m.perfume_name, perfume_id: m.perfume_id, quantity: m.quantity, unit_price: m.unit_price,
-      unit_commission: 0, unit_cost: m.cost_now, status: 'Vendido', pay: 'Pagado', delivery: '',
+      unit_commission: 0, unit_cost: m.cost_now, status: 'Vendido', pay: 'Pagado', delivery: '', src: 'manual', src_id: m.id,
     };
   });
 
   const lines = [...web, ...outsideLines].sort((a, b) => a.created.localeCompare(b.created));
+  // Costo exacto según los lotes (sin redondeos del promedio guardado).
+  for (const l of lines) {
+    const al = lotsOf.all(l.src, l.src_id);
+    const q = al.reduce((n, x) => n + x.qty, 0);
+    if (q === l.quantity && al.every((x) => x.unit_cost != null)) l.unit_cost = al.reduce((n, x) => n + x.qty * x.unit_cost, 0) / l.quantity;
+  }
   const fmtDate = (d) => (d ? d.slice(0, 10).split('-').reverse().join('/') : '');
   const detail = lines.map((l) => {
     const info = perfumeInfo.get(l.perfume_id) || {};
-    const buy = l.perfume_id ? lastBuy.get(l.perfume_id, l.created.slice(0, 10)) : null;
+    // Lotes de los que salieron las unidades (fecha, precio y proveedor de cada compra).
+    const allocs = lotsOf.all(l.src, l.src_id);
+    const fromLots = allocs.filter((a) => a.purchased_at);
+    const buy = fromLots.length
+      ? {
+        purchased_at: null,
+        text: fromLots.map((a) => `${fmtDate(a.purchased_at)} (${a.qty} a Bs ${Number(a.unit_cost).toFixed(2)})`).join(' + ')
+          + (allocs.length > fromLots.length ? ' + sin compra registrada' : ''),
+        supplier: [...new Set(fromLots.map((a) => a.supplier).filter(Boolean))].join(', '),
+      }
+      : (l.perfume_id ? lastBuy.get(l.perfume_id, l.created.slice(0, 10)) : null);
     const sale = l.unit_price * l.quantity;
     const cost = l.unit_cost == null ? null : l.unit_cost * l.quantity;
     const commission = l.unit_commission * l.quantity;
@@ -1438,7 +1533,7 @@ route('GET', '/api/admin/report', async (ctx) => {
     return [
       fmtDate(l.created), l.created.slice(11, 16), l.ref, l.channel, l.vendor, l.who,
       info.name || l.perfume_name, info.brand || '', info.size_ml || null, info.category || '',
-      l.quantity, l.unit_cost, buy ? fmtDate(buy.purchased_at) : '', buy?.supplier || '',
+      l.quantity, l.unit_cost, buy ? (buy.text || fmtDate(buy.purchased_at)) : '', buy?.supplier || '',
       l.unit_price, round2(sale), cost == null ? null : round2(cost), round2(commission), profit,
       profit == null || !sale ? null : profit / sale, l.status, l.pay, l.delivery,
     ];
@@ -1490,16 +1585,22 @@ route('GET', '/api/admin/report', async (ctx) => {
   const orders = new Set(web.map((l) => l.order_id)).size;
   const missing = lines.some((l) => l.unit_cost == null);
 
+  const openLots = db.prepare('SELECT remaining, unit_cost, purchased_at FROM purchases WHERE perfume_id = ? AND remaining > 0 ORDER BY purchased_at, id');
   const inventory = db.prepare(
     `SELECT p.*, (SELECT purchased_at FROM purchases WHERE perfume_id = p.id ORDER BY purchased_at DESC, id DESC LIMIT 1) AS last_buy,
             (SELECT supplier FROM purchases WHERE perfume_id = p.id ORDER BY purchased_at DESC, id DESC LIMIT 1) AS last_supplier
      FROM perfumes p ORDER BY p.brand, p.name`
   ).all().map((p) => {
     const price = p.store_price ?? p.suggested_price;
+    // Valor del stock según sus lotes (lo que no tiene lote, al precio de compra del perfume).
+    const lots = openLots.all(p.id);
+    const inLots = lots.reduce((n, l) => n + l.remaining, 0);
+    const rest = Math.max(0, (p.stock || 0) - inLots);
+    const stockCost = p.stock == null ? null : (rest && p.cost == null ? null : round2(lots.reduce((n, l) => n + l.remaining * l.unit_cost, 0) + rest * (p.cost || 0)));
     return [p.name, p.brand || '', p.size_ml || null, p.category || '', p.stock, p.cost, fmtDate(p.last_buy), p.last_supplier || '',
-      p.store_price, p.suggested_price, p.commission, p.cost == null ? null : round2(price - p.cost),
-      p.stock != null && p.cost != null ? round2(p.stock * p.cost) : null,
-      p.stock != null ? round2(p.stock * price) : null, p.active ? 'Publicado' : 'Oculto'];
+      lots.map((l) => `${l.remaining} a Bs ${Number(l.unit_cost).toFixed(2)} (${fmtDate(l.purchased_at)})`).join(' + '),
+      p.store_price, p.suggested_price, p.cost == null ? null : round2(price - p.cost),
+      stockCost, p.stock != null ? round2(Math.max(0, p.stock) * price) : null, p.active ? 'Publicado' : 'Oculto'];
   });
 
   const period = `Del ${fmtDate(from)} al ${fmtDate(to)}`;
@@ -1534,7 +1635,7 @@ route('GET', '/api/admin/report', async (ctx) => {
         { header: 'Canal', width: 18 }, { header: 'Vendedor', width: 18 }, { header: 'Cliente / nota', width: 26 },
         { header: 'Perfume', width: 28 }, { header: 'Marca', width: 14 }, { header: 'ml', width: 6, type: 'int' },
         { header: 'Categoría', width: 11 }, { header: 'Cant.', width: 7, type: 'int' },
-        { header: 'Precio compra c/u', width: 16, type: 'money' }, { header: 'Fecha de compra', width: 15 },
+        { header: 'Costo c/u (según lote)', width: 18, type: 'money' }, { header: 'Lote(s): fecha de compra y precio', width: 34 },
         { header: 'Proveedor', width: 18 }, { header: 'Precio venta c/u', width: 16, type: 'money' },
         { header: 'Total venta', width: 14, type: 'money' }, { header: 'Costo total', width: 14, type: 'money' },
         { header: 'Comisión', width: 12, type: 'money' }, { header: 'Ganancia', width: 14, type: 'money' },
@@ -1589,9 +1690,9 @@ route('GET', '/api/admin/report', async (ctx) => {
         { header: 'Perfume', width: 30 }, { header: 'Marca', width: 14 }, { header: 'ml', width: 6, type: 'int' },
         { header: 'Categoría', width: 11 }, { header: 'Stock', width: 8, type: 'int' },
         { header: 'Precio compra', width: 14, type: 'money' }, { header: 'Última compra', width: 14 },
-        { header: 'Proveedor', width: 18 }, { header: 'Mi precio venta', width: 15, type: 'money' },
-        { header: 'Precio en la página', width: 17, type: 'money' }, { header: 'Comisión vendedor', width: 16, type: 'money' },
-        { header: 'Ganancia por unidad', width: 18, type: 'money' }, { header: 'Valor en stock (compra)', width: 21, type: 'money' },
+        { header: 'Proveedor', width: 18 }, { header: 'Lotes en stock', width: 36 },
+        { header: 'Mi precio venta', width: 15, type: 'money' }, { header: 'Precio en la página', width: 17, type: 'money' },
+        { header: 'Ganancia por unidad (última compra)', width: 22, type: 'money' }, { header: 'Valor en stock (compra)', width: 21, type: 'money' },
         { header: 'Valor en stock (venta)', width: 20, type: 'money' }, { header: 'Estado', width: 10 },
       ],
       rows: inventory,

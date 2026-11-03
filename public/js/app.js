@@ -1353,7 +1353,15 @@ async function adminStock(body) {
     if (p.stock != null) {
       t.units += p.stock;
       t.sale += p.stock * myPrice(p);
-      if (p.cost != null) { t.cost += p.stock * p.cost; t.profit += p.stock * (myPrice(p) - p.cost); }
+      // Lo que queda en stock se valora con el precio de su lote; lo que no tiene lote, con el precio de compra.
+      const inLots = (p.lots || []).reduce((n, l) => n + l.remaining, 0);
+      const lotCost = (p.lots || []).reduce((n, l) => n + l.remaining * l.unit_cost, 0);
+      const rest = Math.max(0, p.stock - inLots);
+      if (p.cost != null || !rest) {
+        const cost = lotCost + rest * (p.cost || 0);
+        t.cost += cost;
+        t.profit += Math.max(0, p.stock) * myPrice(p) - cost;
+      }
     }
     if (p.cost == null) t.noCost++;
     return t;
@@ -1445,7 +1453,8 @@ async function adminStock(body) {
         <tbody>
           ${perfumes.map((p) => `
             <tr data-row="${p.id}" data-search="${esc(`${p.brand || ''} ${p.name}`.toLowerCase())}">
-              <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}${p.active ? '' : ' · Oculto'}</div>${p.last_purchase ? `<div class="small muted">Última compra: ${fmtDay(p.last_purchase)}</div>` : ''}</td>
+              <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}${p.active ? '' : ' · Oculto'}</div>${p.last_purchase ? `<div class="small muted">Última compra: ${fmtDay(p.last_purchase)}</div>` : ''}
+                ${p.lots?.length ? `<div class="lots">${p.lots.map((l) => `<span class="lot" title="Comprado el ${fmtDay(l.purchased_at)}">${l.remaining} a ${money(l.unit_cost)} <em>· gana ${money(myPrice(p) - l.unit_cost)}</em></span>`).join('')}</div>` : ''}</td>
               <td class="num" data-label="Stock"><input class="inv-input" type="number" min="0" step="1" data-field="stock" value="${p.stock ?? ''}" placeholder="∞"></td>
               <td class="num" data-label="Precio compra"><input class="inv-input" type="number" min="0" step="0.01" data-field="cost" value="${p.cost ?? ''}" placeholder="—"></td>
               <td class="num" data-label="Mi precio venta"><input class="inv-input" type="number" min="0" step="0.01" data-field="store_price" value="${p.store_price ?? ''}" placeholder="${p.suggested_price}"></td>
@@ -1455,7 +1464,7 @@ async function adminStock(body) {
             </tr>`).join('')}
         </tbody>
       </table></div>
-      <p class="small muted">Los cambios se guardan solos al salir de cada casilla. <strong>Mi precio venta</strong> es tu precio propio: no cambia el precio de la página (si lo dejas vacío se usa el de la página). Ganancia c/u = mi precio de venta − precio de compra. "Vendidos" = en la página · fuera de la página.</p>`
+      <p class="small muted">Los cambios se guardan solos al salir de cada casilla. <strong>Mi precio venta</strong> es tu precio propio: no cambia el precio de la página (si lo dejas vacío se usa el de la página). Ganancia c/u = mi precio de venta − precio de compra (el último). Debajo de cada perfume ves sus <strong>lotes</strong>: cuántas unidades quedan de cada compra, a qué precio y cuánto ganas con cada una. Al vender se usan primero las unidades del lote más antiguo y la ganancia se calcula con el precio real de ese lote. "Vendidos" = en la página · fuera de la página.</p>`
       : '<div class="empty">Aún no hay perfumes. Agrégalos en la pestaña Catálogo.</div>'}`;
 
   // Guardar cada casilla al cambiarla.
