@@ -185,6 +185,17 @@ db.exec(`
 if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'discount_pct')) {
   db.exec('ALTER TABLE perfumes ADD COLUMN discount_pct REAL NOT NULL DEFAULT 0');
 }
+// Registro de movimientos: ventas, devoluciones, compras y eliminaciones (para poder rastrear todo).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS activity (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    at      TEXT NOT NULL DEFAULT (datetime('now')),
+    action  TEXT NOT NULL,
+    detail  TEXT NOT NULL,
+    amount  REAL
+  );
+  CREATE INDEX IF NOT EXISTS idx_activity_at ON activity(at);
+`);
 // Disponibilidad: 'auto' (según stock), 'available' (se puede pedir aunque no haya stock, p. ej. por llegar)
 // o 'soldout' (agotado aunque tenga stock).
 if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'availability')) {

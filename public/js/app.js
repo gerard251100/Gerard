@@ -1385,7 +1385,7 @@ async function adminStock(body) {
         help: 'Para lo que vendes en persona, por WhatsApp, etc. Puedes poner varios perfumes. Baja tu stock y entra en el reporte; no cambia el precio de la página ni las comisiones.',
         priceLabel: 'Precio venta c/u', dateName: 'sold_at', extra: '<div class="field"><label>Nota (opcional)</label><input name="note" maxlength="200" placeholder="Ej: cliente, en tienda, feria…"></div>',
         button: 'Registrar venta', perfumes, today: iso(today),
-        history: sales, historyTitle: 'Últimas ventas fuera de la página', priceKey: 'unit_price', delAttr: 'data-del-sale',
+        history: [], historyTitle: '', priceKey: 'unit_price', delAttr: 'data-del-sale',
       })}
       ${opCard({
         id: 'buyForm', kind: 'buy', eyebrow: 'Compra de mercadería', title: 'Ingresar stock comprado',
@@ -1396,8 +1396,41 @@ async function adminStock(body) {
       })}
     </div>
 
+    <div class="card sales-history" id="salesHistory">
+      <div class="sh-head">
+        <div>
+          <div class="eyebrow" style="margin:0">Todas las ventas</div>
+          <h3 style="margin:0.3rem 0">Ventas registradas</h3>
+          <p class="small muted" style="margin:0">Ventas de la página y fuera de la página (sin cancelados). Filtra por fechas, canal o perfume.</p>
+        </div>
+      </div>
+      <div class="sh-filters">
+        <div class="field" style="margin:0"><label for="sh-from">Desde</label><input type="date" id="sh-from" value="${monthStart}"></div>
+        <div class="field" style="margin:0"><label for="sh-to">Hasta</label><input type="date" id="sh-to" value="${iso(today)}"></div>
+        <div class="field sh-search" style="margin:0"><label for="sh-q">Buscar</label><input type="search" id="sh-q" placeholder="Perfume, cliente o nota (ej: scandal)"></div>
+      </div>
+      <div class="chips">
+        <button type="button" class="chip" data-sh-range="today">Hoy</button>
+        <button type="button" class="chip" data-sh-range="week">7 días</button>
+        <button type="button" class="chip active" data-sh-range="month">Este mes</button>
+        <button type="button" class="chip" data-sh-range="last">Mes pasado</button>
+        <button type="button" class="chip" data-sh-range="all">Todo</button>
+      </div>
+      <div class="chips">
+        <button type="button" class="chip active" data-sh-channel="">Todas</button>
+        <button type="button" class="chip" data-sh-channel="web">Página</button>
+        <button type="button" class="chip" data-sh-channel="manual">Fuera de la página</button>
+      </div>
+      <div id="shStats"></div>
+      <div id="shList" class="small muted">Cargando…</div>
+    </div>
+
+    <details class="card activity-card" id="activityCard">
+      <summary><span class="eyebrow" style="margin:0">Registro de movimientos</span> <span class="small muted">· todo lo que se vendió, devolvió, compró o borró</span></summary>
+      <div id="activityList" class="small muted" style="margin-top:1rem">Cargando…</div>
+    </details>
+
     <div class="stats">
-      <div class="stat"><div class="lbl">Unidades en stock</div>    <div class="stats">
       <div class="stat"><div class="lbl">Unidades en stock</div><div class="val">${totals.units}</div></div>
       <div class="stat"><div class="lbl">Invertido en stock (compra)</div><div class="val">${money(totals.cost)}</div></div>
       <div class="stat"><div class="lbl">Valor a mi precio de venta</div><div class="val">${money(totals.sale)}</div></div>
@@ -1457,18 +1490,103 @@ async function adminStock(body) {
       adminStock(body);
     });
   }));
-  $$('[data-del-sale]', body).forEach((b) => b.addEventListener('click', () => {
-    const ticket = sales.find((h) => String(h.id) === b.dataset.delSale);
-    returnModal({
-      title: `Devolución · venta del ${fmtDay(ticket.date)}`,
-      lines: ticket.lines.map((l) => ({ id: l.id, name: l.perfume_name, qty: l.quantity, price: l.unit_price })),
-      action: async (items, password) => {
-        await api('/api/admin/manual-sales/return', { method: 'POST', body: { items, password } });
-        toast('Devolución registrada: las unidades volvieron al stock');
-        adminStock(body);
-      },
-    });
+  // Todas las ventas registradas, con filtro de fechas, canal y búsqueda.
+  const shFrom = $('#sh-from', body);
+  const shTo = $('#sh-to', body);
+  const shQ = $('#sh-q', body);
+  let shChannel = '';
+  let shData = [];
+  const drawSales = () => {
+    const list = shData.filter((x) => !shChannel || x.kind === shChannel);
+    const box = $('#shList', body);
+    const sum = (f) => list.reduce((n, x) => n + x.lines.reduce((t, l) => t + f(l), 0), 0);
+    const total = sum((l) => l.qty * l.price);
+    const units = sum((l) => l.qty);
+    const known = list.flatMap((x) => x.lines).filter((l) => l.cost != null);
+    const profit = known.reduce((n, l) => n + l.qty * (l.price - l.cost), 0);
+    $('#shStats', body).innerHTML = `
+      <div class="sh-stats">
+        <div><span>Ventas</span><strong>${list.length}</strong></div>
+        <div><span>Unidades</span><strong>${units}</strong></div>
+        <div><span>Total vendido</span><strong>${money(total)}</strong></div>
+        <div><span>Ganancia${known.length < list.flatMap((x) => x.lines).length ? ' *' : ''}</span><strong>${money(profit)}</strong></div>
+      </div>
+      ${known.length < list.flatMap((x) => x.lines).length ? '<p class="small muted" style="margin:0 0 0.6rem">* Sin contar los perfumes que no tienen precio de compra.</p>' : ''}`;
+    if (!list.length) { box.innerHTML = '<div class="empty" style="padding:1.5rem">No hay ventas con ese filtro.</div>'; return; }
+    box.innerHTML = `
+      <ul class="op-history sales-list">
+        ${list.map((x, i) => `<li>
+          <div>
+            <strong>${fmtDay(x.date)}</strong>${x.time ? ` <span class="muted">${x.time}</span>` : ''}
+            <span class="sh-chan ${x.kind}">${esc(x.channel)}</span>
+            <span class="muted">· ${esc(x.ref)}</span>${x.who ? ` · <span class="muted">${esc(x.who)}</span>` : ''}
+            ${x.kind === 'web' ? `<span class="badge ${x.paid ? 'approved' : ''}" style="margin-left:0.3rem">${x.paid ? 'Pagado' : 'Pago pendiente'}</span>` : ''}
+            <div class="small muted">${x.lines.map((l) => `${l.qty} × ${esc(l.name)} · ${money(l.price)}`).join('<br>')}</div>
+          </div>
+          <div class="op-hist-right"><strong>${money(x.lines.reduce((n, l) => n + l.qty * l.price, 0))}</strong>
+            <button type="button" class="btn sm ghost" data-sh-ret="${i}">↩ Devolución</button></div>
+        </li>`).join('')}
+      </ul>`;
+    $$('[data-sh-ret]', box).forEach((b) => b.addEventListener('click', () => {
+      const x = list[Number(b.dataset.shRet)];
+      returnModal({
+        title: `Devolución · ${x.ref} del ${fmtDay(x.date)}`,
+        lines: x.lines.map((l) => ({ id: l.id, name: l.name, qty: l.qty, price: l.price })),
+        action: async (items, password, note) => {
+          if (x.kind === 'web') {
+            await api(`/api/orders/${x.id}/return`, { method: 'POST', body: { items: items.map((it) => ({ item_id: it.id, quantity: it.quantity })), password, note } });
+          } else {
+            await api('/api/admin/manual-sales/return', { method: 'POST', body: { items, password } });
+          }
+          toast('Devolución registrada: las unidades volvieron al stock');
+          adminStock(body);
+        },
+      });
+    }));
+  };
+  const loadSales = async () => {
+    const qs = new URLSearchParams();
+    if (shFrom.value) qs.set('from', shFrom.value);
+    if (shTo.value) qs.set('to', shTo.value);
+    if (shQ.value.trim()) qs.set('q', shQ.value.trim());
+    shData = (await api(`/api/admin/sales?${qs}`)).sales;
+    drawSales();
+  };
+  $$('[data-sh-range]', body).forEach((chip) => chip.addEventListener('click', () => {
+    const d = new Date();
+    let from = new Date(d), to = new Date(d);
+    const r = chip.dataset.shRange;
+    if (r === 'week') from.setDate(d.getDate() - 6);
+    if (r === 'month') from = new Date(d.getFullYear(), d.getMonth(), 1);
+    if (r === 'last') { from = new Date(d.getFullYear(), d.getMonth() - 1, 1); to = new Date(d.getFullYear(), d.getMonth(), 0); }
+    shFrom.value = r === 'all' ? '' : iso(from);
+    shTo.value = r === 'all' ? '' : iso(to);
+    $$('[data-sh-range]', body).forEach((c) => c.classList.toggle('active', c === chip));
+    loadSales();
   }));
+  $$('[data-sh-channel]', body).forEach((chip) => chip.addEventListener('click', () => {
+    shChannel = chip.dataset.shChannel;
+    $$('[data-sh-channel]', body).forEach((c) => c.classList.toggle('active', c === chip));
+    drawSales();
+  }));
+  [shFrom, shTo].forEach((el) => el.addEventListener('change', () => {
+    $$('[data-sh-range]', body).forEach((c) => c.classList.remove('active'));
+    loadSales();
+  }));
+  let shTimer;
+  shQ.addEventListener('input', () => { clearTimeout(shTimer); shTimer = setTimeout(loadSales, 300); });
+  loadSales();
+
+  // Registro de movimientos (se carga al abrirlo).
+  $('#activityCard', body).addEventListener('toggle', async (e) => {
+    if (!e.target.open) return;
+    const { activity } = await api('/api/admin/activity');
+    $('#activityList', body).innerHTML = activity.length
+      ? `<ul class="activity-list">${activity.map((a) => `<li><span class="act-when">${fmtDay(a.at.slice(0, 10))} ${a.at.slice(11, 16)}</span>
+          <span class="act-tag act-${esc(a.action.split(' ')[0])}${a.action.includes('borrad') ? ' act-del' : ''}">${esc(a.action)}</span>
+          <span class="act-detail">${esc(a.detail)}</span>${a.amount != null ? `<strong class="act-amount">${money(a.amount)}</strong>` : ''}</li>`).join('')}</ul>`
+      : 'Aún no hay movimientos registrados (empiezan a guardarse desde esta versión).';
+  });
   delOp('data-del-buy', '/api/admin/purchases', '¿Borrar esta compra completa? Esas unidades se restan del stock.', 'Compra borrada');
 
   // Rangos rápidos de fechas.
@@ -1581,11 +1699,38 @@ function bindOpForm(form, { defaultPrice, url, priceKey, done, reload }, byId) {
     const items = $$('.op-line', box).map((line) => Object.fromEntries($$('[data-l]', line).map((el) => [el.dataset.l, el.value])));
     const ids = items.map((it) => it.perfume_id);
     if (new Set(ids).size !== ids.length) { toast('Ese perfume ya está en otra fila: súmalo en la cantidad', true); return; }
-    withBusy(e.submitter, async () => {
-      await api(url, { method: 'POST', body: { ...formData(form), items } });
-      toast(done);
-      reload();
-    });
+    const btn = e.submitter;
+    btn.disabled = true;
+    api(url, { method: 'POST', body: { ...formData(form), items } })
+      .then((res) => {
+        const lines = items.map((it) => {
+          const p = byId[it.perfume_id];
+          return `<li><span>${it.quantity} × ${esc(p ? [p.brand, p.name].filter(Boolean).join(' · ') : '')}</span><span>${money(Number(it[priceKey]) || 0)} c/u</span></li>`;
+        }).join('');
+        openModal(`
+          <div class="op-result ok">
+            <div class="paid-check">✓</div>
+            <h3>${esc(done)}</h3>
+            <p class="small muted">Fecha: <strong style="color:var(--fg)">${fmtDay(form.querySelector('input[type="date"]').value)}</strong></p>
+            <ul class="order-items">${lines}</ul>
+            ${res.warnings?.length ? `<div class="op-warn">⚠ ${res.warnings.map(esc).join('<br>⚠ ')}</div>` : ''}
+            <button class="btn solid" type="button" id="opOk">Listo</button>
+          </div>`);
+        $('#opOk').addEventListener('click', closeModal);
+        reload();
+      })
+      .catch((err) => {
+        openModal(`
+          <div class="op-result bad">
+            <div class="paid-check">!</div>
+            <h3>No se guardó</h3>
+            <p>${esc(err.message)}</p>
+            <p class="small muted">Lo que escribiste sigue en el formulario: corrígelo y vuelve a intentar.</p>
+            <button class="btn solid" type="button" id="opOk">Entendido</button>
+          </div>`);
+        $('#opOk').addEventListener('click', closeModal);
+      })
+      .finally(() => { btn.disabled = false; });
   });
 }
 

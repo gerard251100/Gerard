@@ -676,7 +676,11 @@ function deleteOrders(ids) {
     const del = db.prepare('DELETE FROM orders WHERE id = ?');
     const getStatus = db.prepare('SELECT status FROM orders WHERE id = ?');
     let n = 0;
+    const getOrder = db.prepare('SELECT id, client_name, total, created_at FROM orders WHERE id = ?');
+    const getLines = db.prepare('SELECT perfume_name, quantity, unit_price FROM order_items WHERE order_id = ?');
     for (const id of clean) {
+      const o = getOrder.get(id);
+      if (o) logActivity('pedido borrado', `Se borró el pedido #${o.id} de ${o.client_name} (${o.created_at.slice(0, 10)}): ${linesText(getLines.all(id), 'unit_price')}`, -o.total);
       // Un pedido eliminado sin entregar (por ejemplo, de prueba) devuelve sus unidades al inventario.
       if (getStatus.get(id)?.status !== 'entregado') returnStock(id);
       n += Number(del.run(id).changes);
@@ -743,6 +747,7 @@ route('POST', '/api/orders/:id/return', async (ctx) => {
       db.prepare('INSERT INTO order_history (order_id, status, note) VALUES (?, ?, ?)').run(id, order.status, note);
     }
   });
+  logActivity('devolución', `Pedido #${id} (${order.client_name}): ${note}`, -returns.reduce((n, r) => n + r.qty * r.it.unit_price, 0));
   return { order: loadOrder(id), full: all };
 });
 
@@ -1159,6 +1164,12 @@ route('PATCH', '/api/admin/perfumes/:id/inventory', async (ctx) => {
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(id) };
 });
 
+// Anota un movimiento en el registro (no se puede borrar desde la página).
+function logActivity(action, detail, amount = null) {
+  db.prepare('INSERT INTO activity (action, detail, amount) VALUES (?, ?, ?)').run(action, String(detail).slice(0, 1000), amount);
+}
+const linesText = (rows, priceKey) => rows.map((r) => `${r.quantity ?? r.qty} × ${r.perfume_name ?? r.label} (${(r[priceKey] ?? r.price).toFixed(2)} c/u)`).join(', ');
+
 // Líneas de una venta o compra con varios perfumes: [{ perfume_id, quantity, <precio> }].
 function readLines(items, priceKey, priceLabel) {
   const list = Array.isArray(items) ? items : [];
@@ -1183,6 +1194,8 @@ route('POST', '/api/admin/manual-sales', async (ctx) => {
   const lines = readLines(b.items || [b], 'unit_price', 'precio de venta');
   const soldAt = validDay(b.sold_at);
   const ticket = newToken().slice(0, 12);
+  // Una venta hecha en persona SIEMPRE se guarda: si el stock no alcanzaba, queda en negativo y se avisa.
+  const warnings = [];
   transaction(() => {
     const getStock = db.prepare('SELECT stock FROM perfumes WHERE id = ?');
     const take = db.prepare('UPDATE perfumes SET stock = stock - ? WHERE id = ? AND stock IS NOT NULL');
@@ -1192,12 +1205,15 @@ route('POST', '/api/admin/manual-sales', async (ctx) => {
     );
     for (const { p, qty, price, label } of lines) {
       const { stock } = getStock.get(p.id);
-      if (stock != null && stock < qty) throw new HttpError(409, `Solo tienes ${stock} en stock de ${p.name}`);
+      if (stock != null && stock < qty) warnings.push(`${p.name}: el stock quedó en ${stock - qty}. Revisa su stock.`);
       take.run(qty, p.id);
       insert.run(ticket, p.id, label, p.brand || '', qty, price, p.cost ?? null, soldAt, text(b.note, 200));
     }
+    const total = lines.reduce((n, l) => n + l.qty * l.price, 0);
+    logActivity('venta', `Venta fuera de la página del ${soldAt}: ${linesText(lines, 'price')}${b.note ? ` · ${text(b.note, 200)}` : ''}`, total);
   });
-  return { ok: true, ticket };
+  const saved = db.prepare('SELECT * FROM manual_sales WHERE ticket = ?').all(ticket);
+  return { ok: true, ticket, saved, warnings };
 });
 
 // Borrar una venta registrada por error (con todos sus perfumes): las unidades vuelven al stock.
@@ -1212,6 +1228,7 @@ route('DELETE', '/api/admin/manual-sales/:id', async (ctx) => {
       if (r.perfume_id) give.run(r.quantity, r.perfume_id);
       db.prepare('DELETE FROM manual_sales WHERE id = ?').run(r.id);
     }
+    logActivity('venta borrada', `Se borró la venta del ${sale.sold_at}: ${linesText(rows, 'unit_price')}`, -rows.reduce((n, r) => n + r.quantity * r.unit_price, 0));
   });
   return { ok: true };
 });
@@ -1232,6 +1249,7 @@ route('POST', '/api/admin/manual-sales/return', async (ctx) => {
       if (row.perfume_id) give.run(r.qty, row.perfume_id);
       if (r.qty === row.quantity) db.prepare('DELETE FROM manual_sales WHERE id = ?').run(row.id);
       else db.prepare('UPDATE manual_sales SET quantity = quantity - ? WHERE id = ?').run(r.qty, row.id);
+      logActivity('devolución', `Devolución de la venta del ${row.sold_at}: ${r.qty} × ${row.perfume_name}`, -r.qty * row.unit_price);
     }
   });
   return { ok: true };
@@ -1254,6 +1272,7 @@ route('POST', '/api/admin/purchases', async (ctx) => {
       add.run(qty, price, p.id);
       insert.run(ticket, p.id, label, p.brand || '', qty, price, day, text(b.supplier, 120));
     }
+    logActivity('compra', `Compra del ${day}: ${linesText(lines, 'price')}${b.supplier ? ` · ${text(b.supplier, 120)}` : ''}`, lines.reduce((n, l) => n + l.qty * l.price, 0));
   });
   return { ok: true, ticket };
 });
@@ -1270,8 +1289,83 @@ route('DELETE', '/api/admin/purchases/:id', async (ctx) => {
       if (r.perfume_id) takeBack.run(r.quantity, r.perfume_id);
       db.prepare('DELETE FROM purchases WHERE id = ?').run(r.id);
     }
+    logActivity('compra borrada', `Se borró la compra del ${row.purchased_at}: ${linesText(rows, 'unit_cost')}`);
   });
   return { ok: true };
+});
+
+// Historial completo de ventas fuera de la página (por fechas y búsqueda), agrupado por venta.
+route('GET', '/api/admin/manual-sales', async (ctx) => {
+  requireAdmin(ctx);
+  const isDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+  const from = isDay(ctx.query.get('from')) ? ctx.query.get('from') : '0000-01-01';
+  const to = isDay(ctx.query.get('to')) ? ctx.query.get('to') : '9999-12-31';
+  const q = `%${text(ctx.query.get('q'), 80).toLowerCase()}%`;
+  const rows = db.prepare(
+    `SELECT * FROM manual_sales WHERE sold_at BETWEEN ? AND ?
+       AND (? = '%%' OR lower(perfume_name || ' ' || COALESCE(brand, '') || ' ' || COALESCE(note, '')) LIKE ?)
+     ORDER BY sold_at DESC, id DESC LIMIT 2000`
+  ).all(from, to, q, q);
+  const map = new Map();
+  for (const r of rows) {
+    const key = r.ticket || `id${r.id}`;
+    if (!map.has(key)) map.set(key, { id: r.id, date: r.sold_at, note: r.note || '', lines: [] });
+    map.get(key).lines.push(r);
+  }
+  return { sales: [...map.values()] };
+});
+
+// Todas las ventas (página + fuera de la página) por rango de fechas, para verlas en el panel.
+route('GET', '/api/admin/sales', async (ctx) => {
+  requireAdmin(ctx);
+  const isDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+  const from = isDay(ctx.query.get('from')) ? ctx.query.get('from') : '0000-01-01';
+  const to = isDay(ctx.query.get('to')) ? ctx.query.get('to') : '9999-12-31';
+  const q = text(ctx.query.get('q'), 80).toLowerCase();
+  const sales = [];
+  const orders = db.prepare(
+    `SELECT o.id, datetime(o.created_at, 'localtime') AS at, o.client_name, o.client_phone, o.status, o.payment_status,
+            o.source, COALESCE(u.name, o.legacy_vendor) AS vendor_name
+     FROM orders o LEFT JOIN users u ON u.id = o.vendor_id
+     WHERE o.status != 'cancelado' AND date(o.created_at, 'localtime') BETWEEN ? AND ? ORDER BY o.created_at DESC`
+  ).all(from, to);
+  const items = db.prepare(
+    `SELECT i.id, i.perfume_name AS name, i.quantity AS qty, i.unit_price AS price, COALESCE(i.unit_cost, p.cost) AS cost
+     FROM order_items i LEFT JOIN perfumes p ON p.id = i.perfume_id WHERE i.order_id = ?`
+  );
+  for (const o of orders) {
+    sales.push({
+      kind: 'web', id: o.id, date: o.at.slice(0, 10), time: o.at.slice(11, 16),
+      ref: `Pedido #${o.id}`, who: [o.client_name, o.client_phone].filter(Boolean).join(' · '),
+      channel: o.source === 'cliente' ? 'Página' : `Página · ${o.vendor_name || 'vendedor'}`,
+      status: STATUS_NAMES[o.status] || o.status, paid: o.payment_status === 'pagado', lines: items.all(o.id),
+    });
+  }
+  const manual = db.prepare(
+    `SELECT m.id, m.ticket, m.sold_at, m.note, m.perfume_name AS name, m.quantity AS qty, m.unit_price AS price,
+            COALESCE(m.unit_cost, p.cost) AS cost
+     FROM manual_sales m LEFT JOIN perfumes p ON p.id = m.perfume_id
+     WHERE m.sold_at BETWEEN ? AND ? ORDER BY m.sold_at DESC, m.id DESC`
+  ).all(from, to);
+  const tickets = new Map();
+  for (const m of manual) {
+    const key = m.ticket || `id${m.id}`;
+    if (!tickets.has(key)) {
+      const sale = { kind: 'manual', id: m.id, date: m.sold_at, time: '', ref: 'Venta directa', who: m.note || '', channel: 'Fuera de la página', status: 'Vendido', paid: true, lines: [] };
+      tickets.set(key, sale);
+      sales.push(sale);
+    }
+    tickets.get(key).lines.push({ id: m.id, name: m.name, qty: m.qty, price: m.price, cost: m.cost });
+  }
+  const list = sales
+    .filter((x) => !q || `${x.who} ${x.ref} ${x.lines.map((l) => l.name).join(' ')}`.toLowerCase().includes(q))
+    .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
+  return { sales: list };
+});
+
+route('GET', '/api/admin/activity', async (ctx) => {
+  requireAdmin(ctx);
+  return { activity: db.prepare(`SELECT id, datetime(at, 'localtime') AS at, action, detail, amount FROM activity ORDER BY id DESC LIMIT 300`).all() };
 });
 
 const STATUS_NAMES = { pendiente: 'Pendiente', confirmado: 'Confirmado', preparando: 'En preparación', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };
@@ -1475,6 +1569,18 @@ route('GET', '/api/admin/report', async (ctx) => {
       ],
       rows: buyRows,
       totals: ['TOTAL', '', '', '', bought.units, '', bought.total, ''],
+    },
+    {
+      name: 'Movimientos',
+      title: ['Registro de movimientos (ventas, devoluciones, compras y lo que se borró)', period],
+      columns: [
+        { header: 'Fecha y hora', width: 18 }, { header: 'Movimiento', width: 16 },
+        { header: 'Detalle', width: 90 }, { header: 'Monto', width: 14, type: 'money' },
+      ],
+      rows: db.prepare(
+        `SELECT datetime(at, 'localtime') AS at, action, detail, amount FROM activity
+         WHERE date(at, 'localtime') BETWEEN ? AND ? ORDER BY id`
+      ).all(from, to).map((a) => [fmtDate(a.at) + a.at.slice(10, 16), a.action, a.detail, a.amount]),
     },
     {
       name: 'Inventario',
