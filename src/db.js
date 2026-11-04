@@ -214,6 +214,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_alloc_source ON lot_allocations(source, source_id);
 `);
+// Color del perfume para su pantalla en "Colecciones" (vacío = se toma de la foto).
+if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'accent')) {
+  db.exec('ALTER TABLE perfumes ADD COLUMN accent TEXT');
+}
 // Registro de movimientos: ventas, devoluciones, compras y eliminaciones (para poder rastrear todo).
 db.exec(`
   CREATE TABLE IF NOT EXISTS activity (

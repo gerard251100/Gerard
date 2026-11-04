@@ -308,7 +308,7 @@ function discountPct(p) {
 }
 
 // El stock exacto solo lo ve el administrador; al público solo se le dice si está agotado.
-const PUBLIC_FIELDS = `id, name, brand, category, size_ml, description, image, bestseller,
+const PUBLIC_FIELDS = `id, name, brand, category, size_ml, description, image, bestseller, accent,
   CASE availability WHEN 'soldout' THEN 1 WHEN 'available' THEN 0 ELSE (stock IS NOT NULL AND stock <= 0) END AS sold_out`;
 const AVAILABILITY = ['auto', 'available', 'soldout'];
 
@@ -1080,6 +1080,7 @@ function perfumeFields(b) {
     discountValue(b.discount_bs, money(b.suggested_price)),
     b.bestseller === true || b.bestseller === 1 || b.bestseller === '1' || b.bestseller === 'on' ? 1 : 0,
     AVAILABILITY.includes(b.availability) ? b.availability : 'auto',
+    /^#[0-9a-f]{6}$/i.test(b.accent || '') ? b.accent.toLowerCase() : null,
   ];
 }
 
@@ -1115,8 +1116,8 @@ route('POST', '/api/admin/perfumes', async (ctx) => {
   requireAdmin(ctx);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, cost, discount_bs, bestseller, availability)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, cost, discount_bs, bestseller, availability, accent)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(...perfumeFields(ctx.body));
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(lastInsertRowid) };
@@ -1128,7 +1129,7 @@ route('PUT', '/api/admin/perfumes/:id', async (ctx) => {
   const { changes } = db
     .prepare(
       `UPDATE perfumes SET name = ?, brand = ?, category = ?, size_ml = ?, description = ?, image = ?,
-              suggested_price = ?, commission = ?, active = ?, stock = ?, cost = ?, discount_bs = ?, bestseller = ?, availability = ? WHERE id = ?`
+              suggested_price = ?, commission = ?, active = ?, stock = ?, cost = ?, discount_bs = ?, bestseller = ?, availability = ?, accent = ? WHERE id = ?`
     )
     .run(...perfumeFields(ctx.body), id);
   if (!changes) throw new HttpError(404, 'Perfume no encontrado');

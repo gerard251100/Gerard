@@ -312,7 +312,10 @@ async function router() {
   const soon = settingsCache?.coming_soon === '1' && !state.user && route !== '#/login';
   document.body.classList.toggle('soon-mode', soon);
   if (soon) { viewComingSoon(); return; }
-  const view = route.startsWith('#/pedido/') ? () => viewTrack(route.slice('#/pedido/'.length)) : routes[route] || viewHome;
+  document.body.classList.remove('show-mode');
+  const view = route.startsWith('#/pedido/') ? () => viewTrack(route.slice('#/pedido/'.length))
+    : route.startsWith('#/coleccion/') ? () => viewCollection(route.slice('#/coleccion/'.length))
+      : routes[route] || viewHome;
   try {
     await view();
   } catch (err) {
@@ -383,6 +386,13 @@ async function viewHome() {
       </div>
       <div id="dealsGrid"></div>
     </section>
+    <section class="section collections" id="collections" hidden>
+      <div class="section-head">
+        <div><div class="eyebrow">Explora por marca</div><h2>Colecciones</h2></div>
+        <a class="btn sm" href="#/catalogo">Ver catálogo</a>
+      </div>
+      <div id="collGrid"></div>
+    </section>
     <section class="section bestsellers" id="bestsellers" hidden>
       <div class="section-head">
         <div><div class="eyebrow">Top ventas</div><h2>Los más vendidos</h2></div>
@@ -407,6 +417,8 @@ async function viewHome() {
     $('#deals').hidden = false;
     $('#dealsGrid').innerHTML = `<div class="grid best-grid">${deals.slice(0, 8).map((p) => productCard(p, { mode })).join('')}</div>`;
   }
+  const cards = collectionCards(perfumes);
+  if (cards) { $('#collections').hidden = false; $('#collGrid').innerHTML = cards; }
   const best = perfumes.filter((p) => p.bestseller);
   if (best.length) {
     $('#bestsellers').hidden = false;
@@ -466,7 +478,7 @@ function productCard(p, { mode = 'view' } = {}) {
           </div>`;
   return `
     <article class="product ${soldOut ? 'sold-out' : ''} ${p.discount_pct > 0 ? 'on-sale' : ''}" data-id="${p.id}">
-      <div class="product-img">${productImage(p)}${soldOut ? '<span class="stock-badge out">Agotado</span>' : ''}${p.bestseller ? `<span class="best-badge">★ Más vendido</span>` : ''}${discountBadge(p)}</div>
+      <a class="product-img" href="${collectionHref(brandOf(p), p.id)}" aria-label="Ver ${esc(p.name)}">${productImage(p)}${soldOut ? '<span class="stock-badge out">Agotado</span>' : ''}${p.bestseller ? `<span class="best-badge">★ Más vendido</span>` : ''}${discountBadge(p)}</a>
       <div class="product-body">
         <div class="product-brand">${esc(p.brand || 'Perfume')}</div>
         <div class="product-name">${esc(p.name)}</div>
@@ -590,7 +602,7 @@ function productGrid(list, mode, { grouped } = {}) {
   list.forEach((p) => (byBrand[brandOf(p)] ||= []).push(p));
   return Object.keys(byBrand).sort((a, b) => a.localeCompare(b, 'es')).map((b) => `
     <section class="brand-section">
-      <div class="brand-head"><h3>${esc(b)}</h3><span class="muted small">${byBrand[b].length} ${byBrand[b].length === 1 ? 'perfume' : 'perfumes'}</span></div>
+      <div class="brand-head"><h3>${esc(b)}</h3><a class="brand-link" href="${collectionHref(b)}">Ver colección <span>→</span></a></div>
       <div class="grid">${byBrand[b].map((p) => productCard(p, { mode })).join('')}</div>
     </section>`).join('');
 }
@@ -612,7 +624,8 @@ async function viewCatalog() {
   const draw = (list, opts) => { $('#catalogGrid').innerHTML = productGrid(list, mode, opts); };
   const mode = cardMode();
   const filters = catalogFilters(perfumes, draw);
-  root.innerHTML = `${filters.html}<div id="catalogGrid"></div>
+  const cards = collectionCards(perfumes);
+  root.innerHTML = `${cards ? `<div class="coll-strip"><div class="eyebrow">Colecciones</div>${cards}</div>` : ''}${filters.html}<div id="catalogGrid"></div>
     ${mode === 'shop' ? '<div class="center" style="margin-top:2rem"><a class="btn solid" href="#/carrito">Ir al carrito</a></div>'
       : ''}`;
   filters.bind(root);
@@ -1787,6 +1800,13 @@ function perfumeForm(p = {}) {
         </div>
         <label class="checkbox field full"><input type="checkbox" name="active" ${p.active === 0 ? '' : 'checked'}> Publicado (visible en el catálogo)</label>
         <label class="checkbox field full"><input type="checkbox" name="bestseller" ${p.bestseller ? 'checked' : ''}> ★ Mostrar en «Los más vendidos» del inicio</label>
+        <div class="field full"><label>Color de su pantalla en «Colecciones»</label>
+          <div class="accent-row">
+            <label class="checkbox"><input type="checkbox" id="p-accent-auto" ${p.accent ? '' : 'checked'}> Automático (según la foto)</label>
+            <input type="color" id="p-accent" value="${esc(p.accent || '#7a2e3a')}" ${p.accent ? '' : 'disabled'} aria-label="Color">
+            <input type="hidden" name="accent" value="${esc(p.accent || '')}">
+          </div>
+          <span class="small muted">Tip: sube la foto del perfume en PNG <strong>sin fondo</strong> para que se vea flotando como en las tiendas de lujo.</span></div>
         <div class="field full"><label for="p-avail">Disponibilidad</label>
           <select id="p-avail" name="availability">
             <option value="auto" ${(p.availability || 'auto') === 'auto' ? 'selected' : ''}>Según stock (se agota sola al llegar a 0)</option>
@@ -1800,6 +1820,13 @@ function perfumeForm(p = {}) {
       </div>
     </form>`);
 
+  // Color de la colección: automático o elegido.
+  const accentAuto = $('#p-accent-auto', root);
+  const accentPick = $('#p-accent', root);
+  const accentField = $('[name="accent"]', root);
+  const syncAccent = () => { accentPick.disabled = accentAuto.checked; accentField.value = accentAuto.checked ? '' : accentPick.value; };
+  accentAuto.addEventListener('change', syncAccent);
+  accentPick.addEventListener('input', syncAccent);
   // Vista previa del precio con descuento.
   const showFinal = () => {
     const price = Number($('#p-price', root).value) || 0;
@@ -2272,51 +2299,8 @@ window.addEventListener('scroll', () => {
   $('#topbar').classList.toggle('scrolled', window.scrollY > 40);
 }, { passive: true });
 
-/* ---- Frasco de perfume rociando (pantallas de carga) ---- */
-const BOTTLE_SVG = `
-  <svg class="spray-bottle" viewBox="0 0 120 170" aria-hidden="true">
-    <defs>
-      <linearGradient id="sprayLiquid" x1="0" x2="1" y1="0" y2="1">
-        <stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/>
-        <stop offset="1" stop-color="#ffffff" stop-opacity="0.06"/>
-      </linearGradient>
-      <clipPath id="sprayBody"><path d="M31 62h58a11 11 0 0 1 11 11v76a13 13 0 0 1-13 13H33a13 13 0 0 1-13-13V73a11 11 0 0 1 11-11z"/></clipPath>
-    </defs>
-    <g class="spray-cap">
-      <rect x="45" y="16" width="30" height="22" rx="3"/>
-      <path d="M75 24h11a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H75"/>
-      <path class="cap-line" d="M49 22h22"/>
-    </g>
-    <path d="M51 38h18v10H51z"/>
-    <path d="M47 48h26l4 14H43z"/>
-    <g clip-path="url(#sprayBody)">
-      <rect class="spray-liquid" x="18" y="92" width="84" height="80" fill="url(#sprayLiquid)"/>
-    </g>
-    <path class="spray-glass" d="M31 62h58a11 11 0 0 1 11 11v76a13 13 0 0 1-13 13H33a13 13 0 0 1-13-13V73a11 11 0 0 1 11-11z"/>
-    <path class="spray-shine" d="M30 76v58"/>
-    <rect class="spray-label" x="38" y="100" width="44" height="36" rx="1"/>
-    <text x="60" y="116" text-anchor="middle" class="spray-label-big">D</text>
-    <text x="60" y="129" text-anchor="middle" class="spray-label-small">SCZ</text>
-  </svg>`;
-
-// Dibuja el frasco con su bruma en cada [data-spray].
-function mountSprays(root = document) {
-  $$('[data-spray]', root).forEach((el) => {
-    if (el.dataset.ready) return;
-    el.dataset.ready = '1';
-    const drops = Array.from({ length: 26 }, (_, i) => {
-      const dx = 60 + Math.random() * 150;
-      const dy = -55 + Math.random() * 75;
-      const size = 12 + Math.random() * 30;
-      const delay = (i % 13) * 0.025 + (i < 13 ? 0 : 0.1);
-      return `<i style="--dx:${dx.toFixed(0)}px;--dy:${dy.toFixed(0)}px;--sz:${size.toFixed(0)}px;--dl:${delay.toFixed(2)}s;--s:${(1.6 + Math.random() * 2.2).toFixed(2)}"></i>`;
-    }).join('');
-    el.innerHTML = `${BOTTLE_SVG}<div class="spray-mist">${drops}</div>`;
-  });
-}
-mountSprays();
-
-// Pantalla de carga con el perfume: devuelve una función para cerrarla (se ve al menos 'min' ms).
+/* ---- Pantallas de carga (logo con barra luminosa) ---- */
+// Pantalla de carga: devuelve una función para cerrarla (se ve al menos 'min' ms).
 function showLoader(textValue = 'Cargando…', min = 1100) {
   const el = $('#loader');
   if (!el || reducedMotion) return async () => {};
@@ -2332,7 +2316,7 @@ function showLoader(textValue = 'Cargando…', min = 1100) {
   };
 }
 
-// Intro con el perfume: una vez por sesión del navegador.
+// Intro con el logo y la barra de carga: una vez por sesión del navegador.
 (function intro() {
   const el = $('#intro');
   let seen = false;
@@ -2453,6 +2437,200 @@ function startCountdown(doneText = '¡La oferta terminó!') {
   };
   tick();
   countdownTimer = setInterval(tick, 1000);
+}
+
+/* =================================================================
+   Colecciones: cada perfume de una marca en pantalla completa
+   ================================================================= */
+const collectionHref = (brand, id) => `#/coleccion/${encodeURIComponent(brand)}${id ? `?p=${id}` : ''}`;
+
+// Color de fondo de cada perfume: el que eligió el administrador o el tono principal de su foto.
+const PALETTE = ['#b5651d', '#7a2e3a', '#2f4f7f', '#5b3a7a', '#1f6b5c', '#8a6d2f', '#6b2f2f', '#2f5d6b'];
+const colorCache = new Map();
+function hashColor(text) {
+  let h = 0;
+  for (const ch of String(text)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return PALETTE[h % PALETTE.length];
+}
+function perfumeColor(p) {
+  if (p.accent) return Promise.resolve(p.accent);
+  if (colorCache.has(p.id)) return Promise.resolve(colorCache.get(p.id));
+  const fallback = hashColor(`${p.brand}${p.name}`);
+  if (!p.image) return Promise.resolve(fallback);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 40; c.height = 40;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, 40, 40);
+        const d = ctx.getImageData(0, 0, 40, 40).data;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const [R, G, B, A] = [d[i], d[i + 1], d[i + 2], d[i + 3]];
+          const max = Math.max(R, G, B), min = Math.min(R, G, B);
+          // Se ignoran el fondo blanco/negro y los grises: se busca el color del frasco o del líquido.
+          if (A < 200 || max > 240 && min > 225 || max < 25 || max - min < 28) continue;
+          r += R; g += G; b += B; n++;
+        }
+        const hex = n > 20 ? `#${[r, g, b].map((v) => Math.round(v / n).toString(16).padStart(2, '0')).join('')}` : fallback;
+        colorCache.set(p.id, hex);
+        resolve(hex);
+      } catch { resolve(fallback); }
+    };
+    img.onerror = () => resolve(fallback);
+    img.src = p.image;
+  });
+}
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.round(f < 0 ? v * (1 + f) : v + (255 - v) * f));
+  return `#${ch.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+// Notas olfativas cortas a partir de la descripción ("bergamota, vainilla, ámbar…").
+function perfumeNotes(p) {
+  return String(p.description || '')
+    .split(/[,;·\n/]| y /)
+    .map((t) => t.replace(/^(notas?( de)?( salida| corazón| fondo)?:?)\s*/i, '').trim())
+    .filter((t) => t && t.length <= 22)
+    .slice(0, 5);
+}
+
+async function viewCollection(brandParam) {
+  const brand = decodeURIComponent(brandParam || '');
+  const done = showLoader(`Abriendo ${brand}…`);
+  let perfumes;
+  try { ({ perfumes } = await api('/api/catalog')); } finally { await done(); }
+  const list = perfumes.filter((p) => brandOf(p).toLowerCase() === brand.toLowerCase());
+  if (!list.length) {
+    app.innerHTML = `<div class="empty">No encontramos perfumes de ${esc(brand)}.<br><br><a class="btn sm" href="#/catalogo">Ver el catálogo</a></div>`;
+    return;
+  }
+  const wanted = Number(new URLSearchParams(location.hash.split('?')[1] || '').get('p'));
+  let index = Math.max(0, list.findIndex((p) => p.id === wanted));
+  const word = `${esc(brand.toUpperCase())} <span>✦</span> `;
+  document.body.classList.add('show-mode');
+  app.innerHTML = `
+    <section class="show" id="show">
+      <div class="show-bg" aria-hidden="true"><i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i><i class="blob b4"></i><i class="show-grain"></i></div>
+      <div class="show-word" aria-hidden="true"><div class="show-word-track">${word.repeat(8)}</div></div>
+      <div class="show-top">
+        <a href="#/catalogo" class="show-back">← Catálogo</a>
+        <div class="show-brand">${esc(brand)}<small>Colección</small></div>
+        <div class="show-count" id="showCount"></div>
+      </div>
+      <div class="show-stage">
+        <button type="button" class="show-arrow prev" id="showPrev" aria-label="Anterior">‹</button>
+        <div class="show-product" id="showProduct"></div>
+        <button type="button" class="show-arrow next" id="showNext" aria-label="Siguiente">›</button>
+        <div class="show-notes" id="showNotes" aria-hidden="true"></div>
+      </div>
+      <div class="show-info" id="showInfo"></div>
+      <div class="show-thumbs" id="showThumbs">
+        ${list.map((p, i) => `<button type="button" class="show-thumb" data-go="${i}" aria-label="${esc(p.name)}">${productImage(p)}<span>${esc(p.name)}</span></button>`).join('')}
+      </div>
+    </section>`;
+
+  const show = $('#show');
+  const paint = async (p) => {
+    const c = await perfumeColor(p);
+    if (list[index] !== p) return;
+    show.style.setProperty('--c1', c);
+    show.style.setProperty('--c2', shade(c, -0.55));
+    show.style.setProperty('--c3', shade(c, 0.35));
+    show.style.setProperty('--c4', shade(c, -0.8));
+  };
+  const render = (dir = 0) => {
+    const p = list[index];
+    const soldOut = Boolean(p.sold_out);
+    $('#showCount').textContent = `${String(index + 1).padStart(2, '0')} / ${String(list.length).padStart(2, '0')}`;
+    const product = $('#showProduct');
+    product.innerHTML = `${productImage(p)}${discountBadge(p)}`;
+    product.classList.remove('in-left', 'in-right', 'in');
+    void product.offsetWidth;
+    product.classList.add(dir < 0 ? 'in-left' : dir > 0 ? 'in-right' : 'in');
+    const notes = perfumeNotes(p);
+    $('#showNotes').innerHTML = notes.map((n, i) => `<span class="show-note n${i}">${esc(n)}</span>`).join('');
+    $('#showInfo').innerHTML = `
+      <div class="show-name">${esc(p.name)}</div>
+      <div class="show-meta">${[p.category, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).map(esc).join(' · ')}</div>
+      <div class="show-price">${p.discount_pct > 0 && p.list_price > p.price ? `<s>${money(p.list_price)}</s>` : ''}<strong>${money(p.price)}</strong></div>
+      <div class="show-buy">
+        ${soldOut ? '<span class="btn" aria-disabled="true">Agotado</span>' : `
+          <div class="qty"><button type="button" data-q="-1" aria-label="Menos">−</button><input type="number" min="1" max="999" value="1" id="showQty" aria-label="Cantidad"><button type="button" data-q="1" aria-label="Más">+</button></div>
+          <button type="button" class="btn solid" id="showAdd">Agregar al carrito</button>`}
+      </div>`;
+    $$('.show-thumb', show).forEach((t, i) => t.classList.toggle('active', i === index));
+    // Centrar la miniatura activa sin mover la página.
+    const strip = $('#showThumbs');
+    const thumb = $$('.show-thumb', show)[index];
+    if (strip && thumb) strip.scrollTo({ left: thumb.offsetLeft - strip.clientWidth / 2 + thumb.clientWidth / 2, behavior: 'smooth' });
+    $$('[data-q]', show).forEach((b) => b.addEventListener('click', () => {
+      const q = $('#showQty');
+      q.value = Math.max(1, Math.min(999, (Number(q.value) || 1) + Number(b.dataset.q)));
+    }));
+    $('#showAdd')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const qty = Math.max(1, Math.min(999, Math.floor(Number($('#showQty').value)) || 1));
+      btn.disabled = true;
+      const ok = await hasStock(p.id, (cart.read()[p.id] || 0) + qty);
+      btn.disabled = false;
+      if (!ok) return;
+      cart.add(p.id, qty);
+      toast(`${p.name} agregado al carrito (${qty})`);
+    });
+    history.replaceState(null, '', collectionHref(brand, p.id));
+    paint(p);
+  };
+  const go = (step) => {
+    index = (index + step + list.length) % list.length;
+    render(step);
+  };
+  $('#showPrev').addEventListener('click', () => go(-1));
+  $('#showNext').addEventListener('click', () => go(1));
+  $$('.show-thumb', show).forEach((t) => t.addEventListener('click', () => {
+    const to = Number(t.dataset.go);
+    const dir = to > index ? 1 : to < index ? -1 : 0;
+    index = to;
+    render(dir);
+  }));
+  // Deslizar con el dedo en el celular.
+  let startX = null;
+  const stage = $('.show-stage', show);
+  stage.addEventListener('pointerdown', (e) => { startX = e.clientX; });
+  stage.addEventListener('pointerup', (e) => {
+    if (startX == null) return;
+    const dx = e.clientX - startX;
+    startX = null;
+    if (Math.abs(dx) > 45) go(dx < 0 ? 1 : -1);
+  });
+  const onKey = (e) => {
+    if (!document.body.contains(show)) { document.removeEventListener('keydown', onKey); return; }
+    if (e.key === 'ArrowRight') go(1);
+    if (e.key === 'ArrowLeft') go(-1);
+  };
+  document.addEventListener('keydown', onKey);
+  if (list.length < 2) $$('.show-arrow', show).forEach((b) => { b.hidden = true; });
+  render();
+}
+
+// Tarjetas de marcas para entrar a cada colección.
+function collectionCards(perfumes) {
+  const byBrand = {};
+  perfumes.forEach((p) => (byBrand[brandOf(p)] ||= []).push(p));
+  const brands = Object.keys(byBrand).filter((b) => b !== 'Otras marcas').sort((a, b) => byBrand[b].length - byBrand[a].length || a.localeCompare(b, 'es'));
+  if (!brands.length) return '';
+  return `<div class="coll-grid">${brands.map((b) => {
+    const items = byBrand[b];
+    const cover = items.find((p) => p.image) || items[0];
+    return `<a class="coll-card" href="${collectionHref(b)}" style="--cc:${hashColor(b)}">
+      <div class="coll-img">${productImage(cover)}</div>
+      <div class="coll-text"><span class="coll-name">${esc(b)}</span><span class="coll-count">${items.length} ${items.length === 1 ? 'perfume' : 'perfumes'} · Ver colección →</span></div>
+    </a>`;
+  }).join('')}</div>`;
 }
 
 function viewComingSoon() {
