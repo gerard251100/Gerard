@@ -1143,3 +1143,127 @@ body.bf-mode .pay-card { border-color: rgba(255, 43, 67, 0.6); }
 .lots { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
 .lot { padding: 0.12rem 0.55rem; border: 1px solid var(--line-soft); border-radius: 999px; font-size: 0.7rem; color: var(--fg); white-space: nowrap; }
 .lot em { font-style: normal; color: var(--ok); }
+
+/* =================================================================
+   Identidad de lujo: tipografía y pantallas de carga
+   ================================================================= */
+:root {
+  --display: 'Bodoni Moda', 'Didot', 'Bodoni 72', Georgia, serif;
+  --serif: 'Bodoni Moda', 'Didot', 'Bodoni 72', Georgia, serif;
+  --script: 'Cormorant Garamond', Georgia, serif;
+  --sans: 'Jost', 'Futura', 'Avenir Next', system-ui, sans-serif;
+}
+html, body { font-family: var(--sans); font-weight: 300; letter-spacing: 0.01em; }
+h1, h2, h3 { font-family: var(--serif); font-weight: 400; letter-spacing: 0.005em; }
+h2 { font-size: clamp(1.75rem, 3.2vw, 2.5rem); }
+h3 { font-size: 1.3rem; }
+
+/* Marca */
+.brand-name { font-family: var(--display); font-weight: 500; font-size: 1.22rem; letter-spacing: 0.3em; }
+.brand-tag, .footer-tag, .intro-tag, .hero-tag, .marquee span.script, .cta .script {
+  font-family: var(--script); font-style: italic; font-weight: 400; letter-spacing: 0.03em;
+}
+.brand-tag { font-size: 0.98rem; color: #a8a8a8; }
+.footer-name { font-family: var(--display); font-weight: 500; letter-spacing: 0.34em; }
+.footer-tag { font-size: 1.2rem; }
+
+/* Textos pequeños en mayúsculas espaciadas (estilo maison) */
+.eyebrow { font-family: var(--sans); font-weight: 500; letter-spacing: 0.38em; font-size: 0.66rem; color: #8f8f8f; }
+.nav a, .nav button.link { font-family: var(--sans); font-weight: 400; letter-spacing: 0.24em; font-size: 0.72rem; }
+.btn { font-family: var(--sans); font-weight: 500; letter-spacing: 0.26em; font-size: 0.72rem; }
+.btn.sm { letter-spacing: 0.18em; font-size: 0.66rem; }
+.chip { font-family: var(--sans); font-weight: 400; letter-spacing: 0.2em; font-size: 0.7rem; }
+label, .field label { font-family: var(--sans); font-weight: 500; letter-spacing: 0.22em; }
+th { font-family: var(--sans); letter-spacing: 0.24em; }
+.tab { font-family: var(--sans); font-weight: 500; letter-spacing: 0.24em; }
+input, select, textarea { font-family: var(--sans); font-weight: 400; }
+
+/* Portada */
+.hero-name { font-family: var(--display); font-weight: 400; letter-spacing: 0.08em; }
+.hero-tag { font-size: clamp(1.7rem, 3.6vw, 2.4rem); color: #dcdcdc; }
+.marquee span { font-family: var(--sans); font-weight: 400; letter-spacing: 0.42em; font-size: 0.78rem; }
+.marquee span.script { font-size: 1.35rem; letter-spacing: 0.02em; }
+.feature h3 { font-weight: 400; }
+.feature .num { font-family: var(--display); font-weight: 400; font-style: italic; }
+
+/* Perfumes */
+.product-brand { font-family: var(--sans); font-weight: 500; letter-spacing: 0.3em; font-size: 0.64rem; color: #8a8a8a; }
+.product-name { font-family: var(--serif); font-weight: 400; font-size: 1.32rem; letter-spacing: 0.01em; }
+.product-meta { font-family: var(--sans); letter-spacing: 0.06em; }
+.product-price { font-family: var(--serif); font-weight: 500; font-size: 1.35rem; letter-spacing: 0.02em; }
+.deal-price { font-weight: 600; }
+.stat .val, .cart-total.big, .pay-amount strong, .order-head .title, .sh-stats strong, .op-total strong { font-family: var(--serif); font-weight: 400; }
+.cd-num, .cd-sep { font-family: var(--display); font-weight: 400; }
+.cd-label, .cd-title { font-family: var(--sans); }
+.brand-head h3 { font-family: var(--display); font-weight: 400; letter-spacing: 0.18em; }
+.best-badge, .stock-badge, .badge { font-family: var(--sans); }
+.bf-title, .bf-strip-title, .bf-badge, .bf-stamp { font-family: var(--sans); }
+.bf-title { font-weight: 800; letter-spacing: -0.01em; }
+@media (max-width: 720px) {
+  .brand-name { font-size: 1.02rem; letter-spacing: 0.24em; }
+  .product-name { font-size: 1.08rem; }
+  .product-price { font-size: 1.12rem; }
+  .eyebrow { font-size: 0.6rem; letter-spacing: 0.3em; }
+}
+
+/* ---- Frasco que rocía ---- */
+.spray { position: relative; width: 120px; height: 170px; }
+.spray-bottle { width: 100%; height: 100%; overflow: visible; }
+.spray-bottle path, .spray-bottle rect:not(.spray-liquid) { fill: none; stroke: #fff; stroke-width: 1.3; stroke-linejoin: round; stroke-linecap: round; }
+.spray-bottle .spray-glass { fill: rgba(255, 255, 255, 0.035); }
+.spray-bottle .spray-shine { stroke: rgba(255, 255, 255, 0.45); stroke-width: 2.4; }
+.spray-bottle .cap-line { stroke: rgba(255, 255, 255, 0.5); }
+.spray-bottle .spray-label { stroke: rgba(255, 255, 255, 0.55); stroke-width: 0.8; }
+.spray-label-big { fill: #fff; font-family: var(--display); font-size: 17px; }
+.spray-label-small { fill: rgba(255, 255, 255, 0.75); font-family: var(--sans); font-size: 6px; letter-spacing: 2.4px; }
+.spray-liquid { animation: liquid 2.4s ease-in-out infinite; transform-box: fill-box; }
+.spray-cap { animation: sprayPress 1.8s ease-in-out infinite; transform-box: fill-box; }
+.spray-mist { position: absolute; left: 73.5%; top: 15.8%; width: 0; height: 0; }
+.spray-mist i {
+  position: absolute; left: 0; top: 0; width: var(--sz); height: var(--sz); margin: calc(var(--sz) / -2) 0 0 calc(var(--sz) / -2);
+  border-radius: 50%; opacity: 0; filter: blur(1.5px);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.25) 45%, rgba(255, 255, 255, 0) 70%);
+  animation: sprayMist 1.8s cubic-bezier(.15,.7,.3,1) infinite; animation-delay: var(--dl);
+}
+@keyframes sprayPress { 0%, 6% { transform: none; } 14% { transform: translateY(5px); } 26%, 100% { transform: none; } }
+@keyframes sprayMist {
+  0%, 12% { opacity: 0; transform: translate(0, 0) scale(0.25); }
+  17% { opacity: 0.95; }
+  60% { opacity: 0.3; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(var(--s)); }
+}
+@keyframes liquid { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(2px); } }
+body.bf-mode .spray-mist i { background: radial-gradient(circle, rgba(255, 255, 255, 0.85), rgba(255, 43, 67, 0.3) 45%, rgba(255, 43, 67, 0) 70%); }
+
+/* ---- Intro (al abrir la página) ---- */
+.intro { gap: 1rem; background: radial-gradient(circle at 50% 45%, #141414 0%, #000 60%); }
+.intro .spray { margin-bottom: 0.6rem; animation: fadeUp 0.8s ease both; transform: translateX(-30px); }
+.intro-name { font-family: var(--display); font-weight: 400; letter-spacing: 0.42em; padding-left: 0.42em; animation: introReveal 1.4s 0.6s cubic-bezier(.2,.8,.2,1) both; }
+.intro-line { width: 120px; height: 1px; background: #fff; transform-origin: center; animation: drawLine 1s 1s cubic-bezier(.2,.8,.2,1) both; }
+.intro-tag { font-size: clamp(1.25rem, 3.6vw, 1.6rem); color: #cfcfcf; animation: fadeUp 0.9s 1.3s both; }
+@keyframes introReveal { from { opacity: 0; letter-spacing: 0.9em; filter: blur(8px); } to { opacity: 1; letter-spacing: 0.42em; filter: none; } }
+body.bf-mode .intro { background: radial-gradient(circle at 50% 45%, rgba(255, 43, 67, 0.22), #000 62%); }
+
+/* ---- Pantalla de carga (catálogo) ---- */
+.loader {
+  position: fixed; inset: 0; z-index: 150;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.8rem;
+  background: rgba(0, 0, 0, 0.94); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  opacity: 0; transition: opacity 0.4s ease;
+}
+.loader[hidden] { display: none; }
+.loader.show { opacity: 1; }
+.loader .spray { transform: translateX(-30px) scale(0.9); }
+.loader-name { font-family: var(--display); letter-spacing: 0.42em; padding-left: 0.42em; font-size: 1.15rem; }
+.loader-text { font-family: var(--script); font-style: italic; font-size: 1.15rem; color: #bdbdbd; }
+@media (prefers-reduced-motion: reduce) { .spray-cap, .spray-mist i, .spray-liquid { animation: none; } }
+/* Ajustes: fondo sólido en la intro, bruma más visible y botones en el celular */
+body.bf-mode .intro { background: radial-gradient(circle at 50% 45%, rgba(255, 43, 67, 0.22), rgba(0, 0, 0, 0) 62%), #000; }
+.intro { background: radial-gradient(circle at 50% 45%, #161616 0%, #000 60%), #000; }
+.spray { width: 140px; height: 198px; }
+.spray-mist i { filter: blur(2px); }
+@media (max-width: 720px) {
+  .btn { letter-spacing: 0.16em; }
+  .hero-actions .btn { font-size: 0.68rem; }
+  .spray { width: 120px; height: 170px; }
+}

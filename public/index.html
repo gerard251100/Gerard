@@ -9,14 +9,21 @@
   <link rel="icon" type="image/png" href="img/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500&family=Cormorant+Garamond:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Marcellus&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..800;1,6..96,400..600&family=Cormorant+Garamond:ital,wght@1,400;1,500&family=Jost:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <div class="intro" id="intro" aria-hidden="true">
-    <img src="img/emblem.png" alt="" class="intro-emblem">
+    <div class="spray" data-spray></div>
     <div class="intro-name">DISTINTO SCZ</div>
+    <div class="intro-line"></div>
     <div class="intro-tag">Tu fragancia, tu sello</div>
+  </div>
+
+  <div class="loader" id="loader" hidden aria-live="polite">
+    <div class="spray" data-spray></div>
+    <div class="loader-name">DISTINTO SCZ</div>
+    <div class="loader-text" id="loaderText">Cargando…</div>
   </div>
 
   <div class="scroll-progress" id="scrollProgress"></div>
@@ -42,7 +49,7 @@
     <img src="img/emblem.png" alt="" class="footer-emblem">
     <div class="footer-name">DISTINTO SCZ</div>
     <div class="footer-tag">Tu fragancia, tu sello</div>
-    <p>© <span id="year"></span> Distinto SCZ · Santa Cruz · <span title="Versión de la página">v44</span> · <a href="#/login" class="footer-access">Acceso</a></p>
+    <p>© <span id="year"></span> Distinto SCZ · Santa Cruz · <span title="Versión de la página">v45</span> · <a href="#/login" class="footer-access">Acceso</a></p>
   </footer>
 
   <a class="wa-float" id="waFloat" href="https://wa.me/59163626511" target="_blank" rel="noopener" aria-label="Escríbenos por WhatsApp">

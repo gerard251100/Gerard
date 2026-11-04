@@ -597,7 +597,13 @@ function productGrid(list, mode, { grouped } = {}) {
 
 async function viewCatalog() {
   app.innerHTML = `${bfStrip('Descuentos especiales en perfumes originales · toca <u>Black Friday</u> para ver solo las ofertas')}<div class="section-head"><div><div class="eyebrow">Colección</div><h2>Catálogo</h2></div></div><div id="catalog"></div>`;
-  const { perfumes } = await api('/api/catalog');
+  const done = showLoader('Preparando la colección…');
+  let perfumes;
+  try {
+    ({ perfumes } = await api('/api/catalog'));
+  } finally {
+    await done();
+  }
   const root = $('#catalog');
   if (!perfumes.length) {
     root.innerHTML = '<div class="empty">Aún no hay perfumes en el catálogo.</div>';
@@ -2266,13 +2272,73 @@ window.addEventListener('scroll', () => {
   $('#topbar').classList.toggle('scrolled', window.scrollY > 40);
 }, { passive: true });
 
-// Intro con el logo: una vez por sesión del navegador.
+/* ---- Frasco de perfume rociando (pantallas de carga) ---- */
+const BOTTLE_SVG = `
+  <svg class="spray-bottle" viewBox="0 0 120 170" aria-hidden="true">
+    <defs>
+      <linearGradient id="sprayLiquid" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/>
+        <stop offset="1" stop-color="#ffffff" stop-opacity="0.06"/>
+      </linearGradient>
+      <clipPath id="sprayBody"><path d="M31 62h58a11 11 0 0 1 11 11v76a13 13 0 0 1-13 13H33a13 13 0 0 1-13-13V73a11 11 0 0 1 11-11z"/></clipPath>
+    </defs>
+    <g class="spray-cap">
+      <rect x="45" y="16" width="30" height="22" rx="3"/>
+      <path d="M75 24h11a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H75"/>
+      <path class="cap-line" d="M49 22h22"/>
+    </g>
+    <path d="M51 38h18v10H51z"/>
+    <path d="M47 48h26l4 14H43z"/>
+    <g clip-path="url(#sprayBody)">
+      <rect class="spray-liquid" x="18" y="92" width="84" height="80" fill="url(#sprayLiquid)"/>
+    </g>
+    <path class="spray-glass" d="M31 62h58a11 11 0 0 1 11 11v76a13 13 0 0 1-13 13H33a13 13 0 0 1-13-13V73a11 11 0 0 1 11-11z"/>
+    <path class="spray-shine" d="M30 76v58"/>
+    <rect class="spray-label" x="38" y="100" width="44" height="36" rx="1"/>
+    <text x="60" y="116" text-anchor="middle" class="spray-label-big">D</text>
+    <text x="60" y="129" text-anchor="middle" class="spray-label-small">SCZ</text>
+  </svg>`;
+
+// Dibuja el frasco con su bruma en cada [data-spray].
+function mountSprays(root = document) {
+  $$('[data-spray]', root).forEach((el) => {
+    if (el.dataset.ready) return;
+    el.dataset.ready = '1';
+    const drops = Array.from({ length: 26 }, (_, i) => {
+      const dx = 60 + Math.random() * 150;
+      const dy = -55 + Math.random() * 75;
+      const size = 12 + Math.random() * 30;
+      const delay = (i % 13) * 0.025 + (i < 13 ? 0 : 0.1);
+      return `<i style="--dx:${dx.toFixed(0)}px;--dy:${dy.toFixed(0)}px;--sz:${size.toFixed(0)}px;--dl:${delay.toFixed(2)}s;--s:${(1.6 + Math.random() * 2.2).toFixed(2)}"></i>`;
+    }).join('');
+    el.innerHTML = `${BOTTLE_SVG}<div class="spray-mist">${drops}</div>`;
+  });
+}
+mountSprays();
+
+// Pantalla de carga con el perfume: devuelve una función para cerrarla (se ve al menos 'min' ms).
+function showLoader(textValue = 'Cargando…', min = 1100) {
+  const el = $('#loader');
+  if (!el || reducedMotion) return async () => {};
+  $('#loaderText').textContent = textValue;
+  el.hidden = false;
+  requestAnimationFrame(() => el.classList.add('show'));
+  const started = Date.now();
+  return async () => {
+    const wait = Math.max(0, min - (Date.now() - started));
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    el.classList.remove('show');
+    setTimeout(() => { if (!el.classList.contains('show')) el.hidden = true; }, 450);
+  };
+}
+
+// Intro con el perfume: una vez por sesión del navegador.
 (function intro() {
   const el = $('#intro');
   let seen = false;
   try { seen = sessionStorage.getItem('introSeen') === '1'; sessionStorage.setItem('introSeen', '1'); } catch { /* sin almacenamiento */ }
   if (seen || reducedMotion) { el.remove(); return; }
-  setTimeout(() => { el.classList.add('done'); setTimeout(() => el.remove(), 800); }, 1900);
+  setTimeout(() => { el.classList.add('done'); setTimeout(() => el.remove(), 900); }, 2600);
 })();
 
 /* =================================================================
