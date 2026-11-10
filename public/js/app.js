@@ -227,6 +227,7 @@ function renderNav() {
     const n = cart.count();
     html += link('#/carrito', 'Carrito', n ? ` <span class="badge count">${n}</span>` : '');
     if (myOrders.read().length) html += link('#/mis-pedidos', 'Mis pedidos');
+    if (raffleOn()) html += link('#/sorteo', 'Sorteo', ' <span class="nav-gift">🎁</span>');
   } else {
     const n = cart.count();
     html += link('#/carrito', 'Carrito', n ? ` <span class="badge count">${n}</span>` : '');
@@ -246,6 +247,7 @@ const ICONS = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
   panel: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   out: '<path d="M15 4h4v16h-4M10 16l4-4-4-4M14 12H3"/>',
+  gift: '<rect x="3" y="9" width="18" height="12" rx="1"/><path d="M3 13h18M12 9v12M12 9c-1.5-3-6-4-6-1.5S10 9 12 9c2 0 6 .5 6-1.5S13.5 6 12 9"/>',
 };
 function renderTabbar(route) {
   const bar = $('#tabbar');
@@ -262,6 +264,7 @@ function renderTabbar(route) {
   if (!state.user) {
     html += item('#/carrito', 'bag', 'Carrito', { badge: n });
     html += item('#/mis-pedidos', 'receipt', 'Pedidos', { match: ['#/pedido/'] });
+    if (raffleOn()) html += item('#/sorteo', 'gift', 'Sorteo');
   } else {
     html += item('#/carrito', 'bag', 'Carrito', { badge: n, match: ['#/pedido/'] });
     html += item('#/admin', 'panel', 'Admin');
@@ -298,6 +301,7 @@ const routes = {
   '#/carrito': viewShopCart,
   '#/mis-pedidos': viewMyOrders,
   '#/login': viewLogin,
+  '#/sorteo': viewRaffle,
   '#/admin': () => viewAdmin(state.tab.admin || 'resumen'),
 };
 
@@ -379,6 +383,7 @@ async function viewHome() {
   app.innerHTML = `
     ${hero}
     <div class="marquee ${bf ? 'bf-marquee' : ''}" aria-hidden="true"><div class="marquee-track">${marqueeItems}<span class="dot">◇</span>${marqueeItems}<span class="dot">◇</span></div></div>
+    ${raffleBanner()}
     <section class="section bf-deals" id="deals" hidden>
       <div class="section-head">
         <div><div class="eyebrow bf-eyebrow">Black Friday</div><h2>Ofertas imperdibles</h2></div>
@@ -996,7 +1001,8 @@ function confirmWithPassword({ title, message, button, action, extraHtml = '', c
     if (extra === null) return;
     withBusy(e.submitter, async () => {
       await action($('#pc-pass', root).value, extra);
-      closeModal();
+      // Cerrar solo la ventana de la contraseña (la acción pudo abrir otra con el resultado).
+      if ($('#pwConfirm')) closeModal();
     });
   });
 }
@@ -1093,6 +1099,7 @@ function orderCard(o, { admin = false, statuses = [] } = {}) {
         </div>
         <div class="btn-row">
           <button class="btn sm ghost" data-detail="${o.id}">Historial</button>
+          ${admin && o.status !== 'cancelado' && raffleOn() ? `<button class="btn sm" data-coupon="${o.id}">🎟 Cupón</button>` : ''}
           ${admin && o.status !== 'cancelado' ? `<button class="btn sm ghost" data-return-order="${o.id}">↩ Devolución</button>` : ''}
           ${admin ? `<button class="btn sm ghost danger" data-delete-order="${o.id}">Eliminar</button>` : ''}
           ${admin ? `
@@ -1152,6 +1159,7 @@ async function renderAdmin(tab) {
     ['resumen', 'Resumen'],
     ['catalogo', 'Catálogo'],
     ['stock', 'Stock'],
+    ['sorteo', 'Sorteo'],
     ['pedidos', `Pedidos${summary.openOrders ? ` (${summary.openOrders})` : ''}`],
     ['cuenta', 'Pagos y cuenta'],
   ];
@@ -1161,7 +1169,7 @@ async function renderAdmin(tab) {
     <div id="tabBody"></div>`;
   $$('[data-tab]').forEach((b) => b.addEventListener('click', () => viewAdmin(b.dataset.tab)));
   const body = $('#tabBody');
-  const views = { resumen: adminSummary, catalogo: adminPerfumes, stock: adminStock, pedidos: adminOrders, cuenta: adminAccount };
+  const views = { resumen: adminSummary, catalogo: adminPerfumes, stock: adminStock, sorteo: adminRaffle, pedidos: adminOrders, cuenta: adminAccount };
   await (views[tab] || views.resumen)(body, summary);
 }
 
@@ -1912,6 +1920,11 @@ async function adminOrders(body, _s, filter = '', source = '') {
       },
     });
   }));
+  $$('[data-coupon]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, async () => {
+    const o = orders.find((x) => x.id === Number(b.dataset.coupon));
+    const { codes } = await api('/api/admin/raffle/codes', { method: 'POST', body: { count: 1, order_id: o.id, note: o.client_name } });
+    showCodes(codes, o.client_phone, o.client_name);
+  })));
   $$('[data-return-order]', body).forEach((b) => b.addEventListener('click', () => {
     const o = orders.find((x) => x.id === Number(b.dataset.returnOrder));
     returnModal({
@@ -2311,6 +2324,7 @@ function loaderTextFor(route) {
   if (route.startsWith('#/mis-pedidos')) return 'Buscando tus pedidos…';
   if (route.startsWith('#/pedido/')) return 'Cargando tu pedido…';
   if (route.startsWith('#/admin')) return 'Abriendo el panel…';
+  if (route.startsWith('#/sorteo')) return 'Preparando el sorteo…';
   return 'Cargando…';
 }
 
@@ -2435,6 +2449,289 @@ function startCountdown(doneText = '¡La oferta terminó!') {
   };
   tick();
   countdownTimer = setInterval(tick, 1000);
+}
+
+/* =================================================================
+   Sorteo: "Registra tu código"
+   ================================================================= */
+const raffleOn = () => settingsCache?.raffle_on !== '0';
+const raffleDate = () => new Date(`${settingsCache?.raffle_date || '2026-11-30T20:00'}:00-04:00`);
+const rafflePrizesList = () => String(settingsCache?.raffle_prizes || 'Yara Elixir|Asad clásico').split('|').filter(Boolean);
+const PLACE = ['1er premio', '2do premio', '3er premio', '4to premio', '5to premio'];
+
+// Códigos que este celular/computadora ya registró (solo para mostrarlos).
+const myCodes = {
+  read() { try { return JSON.parse(localStorage.getItem('raffle_codes')) || []; } catch { return []; } },
+  add(code) { try { localStorage.setItem('raffle_codes', JSON.stringify([...new Set([code, ...this.read()])].slice(0, 30))); } catch { /* sin almacenamiento */ } },
+};
+
+function raffleBanner() {
+  if (!raffleOn() || Date.now() > raffleDate().getTime() + 7 * 86400000) return '';
+  const prizes = rafflePrizesList();
+  return `
+    <a class="raffle-banner" href="#/sorteo">
+      <span class="rb-gift" aria-hidden="true">🎁</span>
+      <span class="rb-text">
+        <span class="rb-eyebrow">Gran sorteo · ${raffleDate().toLocaleDateString('es-BO', { day: 'numeric', month: 'long', timeZone: 'America/La_Paz' })}</span>
+        <strong>Gana ${prizes.map(esc).join(' o ')}</strong>
+        <span class="rb-sub">Cada compra te da un código. Regístralo y participa.</span>
+      </span>
+      <span class="btn solid sm">Registra tu código</span>
+    </a>`;
+}
+
+async function viewRaffle() {
+  const data = await api('/api/raffle');
+  const prizes = data.prizes;
+  const date = new Date(`${data.date}:00-04:00`);
+  const drawn = data.winners.length > 0;
+  const mine = myCodes.read();
+  app.innerHTML = `
+    <section class="raffle">
+      <div class="raffle-head">
+        <div class="eyebrow">Gran sorteo Distinto SCZ</div>
+        <h1 class="raffle-title">Registra tu código</h1>
+        <p class="raffle-lead">Por cada compra te damos un <strong>código</strong>. Regístralo aquí y participa por estos premios. <span class="muted">Más compras, más códigos, más oportunidades.</span></p>
+      </div>
+      ${drawn ? `
+        <div class="card raffle-winners">
+          <div class="eyebrow" style="margin:0">Resultados</div>
+          <h2 style="margin:0.3rem 0 1rem">¡Felicidades a los ganadores!</h2>
+          <div class="prize-grid">
+            ${data.winners.map((w) => `
+              <div class="prize-card won">
+                <div class="prize-place">${esc(PLACE[w.rank - 1] || `Premio ${w.rank}`)}</div>
+                <div class="prize-name">${esc(w.prize)}</div>
+                <div class="prize-winner">${esc(w.name)} <span class="muted">· ${esc(w.phone)}</span></div>
+                <div class="prize-code">${esc(w.code)}</div>
+              </div>`).join('')}
+          </div>
+          <p class="small muted" style="margin:1rem 0 0">Nos comunicaremos con los ganadores por WhatsApp.</p>
+        </div>` : `
+        <div class="prize-grid">
+          ${prizes.map((p, i) => `
+            <div class="prize-card">
+              <div class="prize-shine" aria-hidden="true"></div>
+              <div class="prize-place">${esc(PLACE[i] || `Premio ${i + 1}`)}</div>
+              <img class="prize-emblem" src="/img/emblem.png" alt="" aria-hidden="true">
+              <div class="prize-name">${esc(p)}</div>
+            </div>`).join('')}
+        </div>
+        ${countdownHTML(date, `Sorteo: ${fmtEnd(date)}`)}`}
+      ${data.on && !drawn ? `
+        <form class="card form raffle-form" id="raffleForm">
+          <h3 style="margin:0">Ingresa tus datos</h3>
+          <div class="field"><label for="rf-code">Tu código *</label>
+            <input id="rf-code" name="code" required autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="DS-XXXX-XXXX" maxlength="14" class="code-input"></div>
+          <div class="field"><label for="rf-name">Nombre completo *</label><input id="rf-name" name="name" required maxlength="120" autocomplete="name"></div>
+          <div class="form-grid">
+            <div class="field"><label for="rf-phone">Celular / WhatsApp *</label><input id="rf-phone" name="phone" type="tel" required autocomplete="tel" placeholder="Ej: 70012345"></div>
+            <div class="field"><label for="rf-ci">CI (opcional)</label><input id="rf-ci" name="ci" maxlength="30" inputmode="numeric"></div>
+          </div>
+          <button class="btn solid" type="submit">Registrar mi código</button>
+          <p class="small muted" style="margin:0">Usaremos tu celular solo para avisarte si ganas. Cada código se puede registrar una sola vez.</p>
+        </form>` : ''}
+      ${mine.length ? `
+        <div class="card raffle-mine">
+          <div class="eyebrow" style="margin:0">Registrados en este dispositivo</div>
+          <div class="my-codes">${mine.map((c) => `<span class="code-chip">${esc(c)}</span>`).join('')}</div>
+        </div>` : ''}
+    </section>`;
+  if (!drawn) startCountdown('¡Hoy es el sorteo!');
+  const form = $('#raffleForm');
+  if (!form) return;
+  // El código se escribe en mayúsculas con el formato DS-XXXX-XXXX.
+  const codeInput = $('#rf-code');
+  codeInput.addEventListener('input', () => {
+    const raw = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^DS/, '').slice(0, 8);
+    codeInput.value = raw ? `DS-${raw.slice(0, 4)}${raw.length > 4 ? `-${raw.slice(4)}` : ''}` : '';
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    withBusy(e.submitter, async () => {
+      const { code, chances } = await api('/api/raffle/register', { method: 'POST', body: formData(form) });
+      myCodes.add(code);
+      openModal(`
+        <div class="op-result ok">
+          <div class="paid-check">✓</div>
+          <h3>¡Ya estás participando!</h3>
+          <div class="code-chip big">${esc(code)}</div>
+          <p class="muted">${chances > 1 ? `Tienes <strong style="color:var(--fg)">${chances} códigos</strong> registrados: ${chances} oportunidades de ganar.` : 'Guarda tu código. Más compras, más oportunidades.'}</p>
+          <p class="small muted">Sorteo: ${esc(fmtEnd(date))}</p>
+          <button class="btn solid" type="button" id="rfOk">Listo</button>
+        </div>`);
+      $('#rfOk').addEventListener('click', () => { closeModal(); viewRaffle(); });
+    });
+  });
+}
+
+/* ---- Panel: pestaña Sorteo ---- */
+async function adminRaffle(body) {
+  const { codes, prizes, settings } = await api('/api/admin/raffle');
+  const registered = codes.filter((c) => c.registered_at);
+  const winners = codes.filter((c) => c.winner_rank).sort((a, b) => a.winner_rank - b.winner_rank);
+  const people = new Set(registered.map((c) => String(c.phone).replace(/\D/g, ''))).size;
+  body.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="lbl">Códigos generados</div><div class="val">${codes.length}</div></div>
+      <div class="stat"><div class="lbl">Códigos registrados</div><div class="val">${registered.length}</div></div>
+      <div class="stat"><div class="lbl">Personas participando</div><div class="val">${people}</div></div>
+      <div class="stat"><div class="lbl">Sin registrar</div><div class="val">${codes.length - registered.length}</div></div>
+    </div>
+
+    <div class="raffle-admin-grid">
+      <form class="card form" id="genForm">
+        <div class="eyebrow" style="margin:0">Generar códigos</div>
+        <h3 style="margin:0">Un código por cada compra</h3>
+        <div class="form-grid">
+          <div class="field"><label for="g-count">Cantidad</label><input id="g-count" name="count" type="number" min="1" max="200" value="1"></div>
+          <div class="field"><label for="g-note">Nota (opcional)</label><input id="g-note" name="note" maxlength="160" placeholder="Ej: Ana, compra en tienda"></div>
+        </div>
+        <button class="btn solid" type="submit">Generar</button>
+        <p class="small muted" style="margin:0">También puedes generar el cupón desde cada pedido (botón 🎟 Cupón en Pedidos).</p>
+      </form>
+
+      <form class="card form" id="raffleSettings">
+        <div class="eyebrow" style="margin:0">Configuración</div>
+        <h3 style="margin:0">Sorteo ${settings.raffle_on === '1' ? '<span class="badge approved">Activo</span>' : '<span class="badge">Apagado</span>'}</h3>
+        <label class="checkbox"><input type="checkbox" name="raffle_on" ${settings.raffle_on === '1' ? 'checked' : ''}> Mostrar "Registra tu código" en la página</label>
+        <div class="field"><label for="r-date">Fecha y hora del sorteo</label><input type="datetime-local" id="r-date" name="raffle_date" value="${esc(settings.raffle_date)}"></div>
+        <div class="field"><label for="r-prizes">Premios (uno por línea, en orden)</label><textarea id="r-prizes" name="raffle_prizes" rows="3">${esc(prizes.join('\n'))}</textarea></div>
+        <button class="btn" type="submit">Guardar</button>
+      </form>
+    </div>
+
+    <div class="card raffle-draw">
+      <div>
+        <div class="eyebrow" style="margin:0">Sorteo</div>
+        <h3 style="margin:0.3rem 0">${winners.length ? '🏆 Ganadores' : `Sortear ${prizes.length} ganador${prizes.length === 1 ? '' : 'es'}`}</h3>
+        ${winners.length ? `
+          <ul class="order-items">${winners.map((w) => `<li><span><strong>${esc(w.prize)}</strong> → ${esc(w.name)} · ${esc(w.phone)}${w.ci ? ` · CI ${esc(w.ci)}` : ''} · <span class="code-chip">${esc(w.code)}</span></span>
+            ${w.phone ? `<a class="btn sm ok" target="_blank" rel="noopener" href="${esc(waLink(w.phone, `¡Hola ${w.name.split(' ')[0]}! Te escribimos de Distinto SCZ: ganaste ${w.prize} en nuestro sorteo con el código ${w.code}. 🎉`))}">WhatsApp</a>` : ''}</li>`).join('')}</ul>`
+          : `<p class="small muted" style="margin:0">Elige al azar un ganador por premio entre los códigos registrados. Cada código es una oportunidad y una persona no puede ganar dos premios.</p>`}
+      </div>
+      ${winners.length
+        ? '<button class="btn ghost danger" type="button" id="resetDraw">Anular resultado</button>'
+        : `<button class="btn solid bf-cta" type="button" id="doDraw" ${people < prizes.length ? 'disabled' : ''}>🎲 Sortear ganadores</button>`}
+    </div>
+
+    <div class="section-head" style="margin-top:1.5rem"><h2>Códigos</h2>
+      <div class="chips">
+        <button type="button" class="chip active" data-cf="">Todos</button>
+        <button type="button" class="chip" data-cf="reg">Registrados</button>
+        <button type="button" class="chip" data-cf="free">Sin registrar</button>
+      </div>
+    </div>
+    <input type="search" id="codeSearch" placeholder="Buscar código, nombre o celular…" style="max-width:360px;margin-bottom:1rem">
+    <div id="codeList"></div>`;
+
+  let filter = '';
+  const draw = () => {
+    const q = $('#codeSearch', body).value.trim().toLowerCase();
+    const list = codes.filter((c) => (!filter || (filter === 'reg' ? c.registered_at : !c.registered_at))
+      && (!q || `${c.code} ${c.name || ''} ${c.phone || ''} ${c.note || ''}`.toLowerCase().includes(q)));
+    $('#codeList', body).innerHTML = list.length ? `
+      <div class="table-wrap"><table class="stack">
+        <thead><tr><th>Código</th><th>Estado</th><th>Registrado por</th><th>Nota / pedido</th><th class="num">Acciones</th></tr></thead>
+        <tbody>${list.map((c) => `
+          <tr>
+            <td class="cell-title"><span class="code-chip">${esc(c.code)}</span>${c.winner_rank ? ` <span class="badge approved">🏆 ${esc(c.prize)}</span>` : ''}<div class="small muted">Creado ${fmtDay(c.created_local.slice(0, 10))}</div></td>
+            <td data-label="Estado">${c.registered_at ? '<span class="badge approved">Registrado</span>' : '<span class="badge">Sin registrar</span>'}</td>
+            <td data-label="Registrado por">${c.registered_at ? `${esc(c.name)}<div class="small muted">${esc(c.phone)}${c.ci ? ` · CI ${esc(c.ci)}` : ''} · ${fmtDay(c.registered_local.slice(0, 10))}</div>` : '<span class="muted">—</span>'}</td>
+            <td data-label="Nota / pedido" class="small">${[c.note, c.order_id ? `Pedido #${c.order_id}${c.order_client ? ` · ${c.order_client}` : ''}` : ''].filter(Boolean).map(esc).join('<br>') || '<span class="muted">—</span>'}</td>
+            <td class="num cell-actions"><div class="btn-row" style="justify-content:flex-end">
+              <button class="btn sm" type="button" data-copy="${esc(c.code)}">Copiar</button>
+              <button class="btn sm ghost danger" type="button" data-del-code="${c.id}" data-reg="${c.registered_at ? 1 : ''}">×</button>
+            </div></td>
+          </tr>`).join('')}</tbody>
+      </table></div>` : '<div class="empty">No hay códigos con ese filtro.</div>';
+    $$('[data-copy]', body).forEach((b) => b.addEventListener('click', () => copyText(b.dataset.copy)));
+    $$('[data-del-code]', body).forEach((b) => b.addEventListener('click', () => {
+      const run = async (password) => {
+        await api(`/api/admin/raffle/codes/${b.dataset.delCode}`, { method: 'DELETE', body: { password } });
+        toast('Código borrado');
+        adminRaffle(body);
+      };
+      if (b.dataset.reg) confirmWithPassword({ title: 'Borrar un código ya registrado', message: 'Esa persona dejará de participar con este código.', button: 'Borrar', action: run });
+      else if (confirm('¿Borrar este código?')) withBusy(b, () => run());
+    }));
+  };
+  $('#codeSearch', body).addEventListener('input', draw);
+  $$('[data-cf]', body).forEach((chip) => chip.addEventListener('click', () => {
+    filter = chip.dataset.cf;
+    $$('[data-cf]', body).forEach((c) => c.classList.toggle('active', c === chip));
+    draw();
+  }));
+  draw();
+
+  $('#genForm', body).addEventListener('submit', (e) => {
+    e.preventDefault();
+    withBusy(e.submitter, async () => {
+      const { codes: made } = await api('/api/admin/raffle/codes', { method: 'POST', body: formData(e.target) });
+      showCodes(made);
+      adminRaffle(body);
+    });
+  });
+  $('#raffleSettings', body).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = e.target;
+    withBusy(e.submitter, async () => {
+      settingsCache = (await api('/api/admin/settings', { method: 'PUT', body: {
+        raffle_on: f.raffle_on.checked, raffle_date: f.raffle_date.value, raffle_prizes: f.raffle_prizes.value.split('\n'),
+      } })).settings;
+      toast('Sorteo guardado');
+      renderNav();
+      adminRaffle(body);
+    });
+  });
+  $('#doDraw', body)?.addEventListener('click', () => confirmWithPassword({
+    title: 'Sortear ganadores',
+    message: `Se elegirá al azar 1 ganador por premio (${prizes.join(', ')}) entre ${registered.length} códigos registrados. El resultado se publica en la página.`,
+    button: 'Sortear',
+    action: async (password) => {
+      const { winners: won } = await api('/api/admin/raffle/draw', { method: 'POST', body: { password } });
+      openModal(`
+        <div class="op-result ok">
+          <div class="paid-check">🏆</div>
+          <h3>¡Tenemos ganadores!</h3>
+          <ul class="order-items">${won.map((w) => `<li><span><strong>${esc(w.prize)}</strong></span><span>${esc(w.name)} · ${esc(w.code)}</span></li>`).join('')}</ul>
+          <button class="btn solid" type="button" id="drawOk">Listo</button>
+        </div>`);
+      $('#drawOk').addEventListener('click', () => { closeModal(); adminRaffle(body); });
+    },
+  }));
+  $('#resetDraw', body)?.addEventListener('click', () => confirmWithPassword({
+    title: 'Anular el resultado del sorteo',
+    message: 'Los ganadores dejan de mostrarse y podrás volver a sortear.',
+    button: 'Anular',
+    action: async (password) => {
+      await api('/api/admin/raffle/reset', { method: 'POST', body: { password } });
+      toast('Resultado anulado');
+      adminRaffle(body);
+    },
+  }));
+}
+
+function copyText(textValue) {
+  (navigator.clipboard?.writeText(textValue) || Promise.reject()).then(() => toast(`Copiado: ${textValue}`)).catch(() => prompt('Copia el código:', textValue));
+}
+
+// Ventana con los códigos recién generados (para copiarlos o enviarlos por WhatsApp).
+function showCodes(codesList, phone = '', clientName = '') {
+  const msg = (code) => `¡Gracias por tu compra en Distinto SCZ! 🎁 Tu código para el sorteo es ${code}. Regístralo en ${location.origin}/#/sorteo y participa.`;
+  openModal(`
+    <div class="op-result ok">
+      <div class="paid-check">🎟</div>
+      <h3>${codesList.length === 1 ? 'Código generado' : `${codesList.length} códigos generados`}</h3>
+      <div class="my-codes">${codesList.map((c) => `<span class="code-chip big">${esc(c)}</span>`).join('')}</div>
+      <div class="btn-row" style="justify-content:center">
+        <button class="btn" type="button" id="copyCodes">Copiar ${codesList.length === 1 ? 'código' : 'todos'}</button>
+        ${codesList.length === 1 ? `<a class="btn ok" target="_blank" rel="noopener" href="${esc(phone ? waLink(phone, msg(codesList[0])) : `https://wa.me/?text=${encodeURIComponent(msg(codesList[0]))}`)}">Enviar por WhatsApp${clientName ? ` a ${esc(clientName.split(' ')[0])}` : ''}</a>` : ''}
+      </div>
+      <button class="btn solid" type="button" id="codesOk">Listo</button>
+    </div>`);
+  $('#copyCodes').addEventListener('click', () => copyText(codesList.join('\n')));
+  $('#codesOk').addEventListener('click', closeModal);
 }
 
 function viewComingSoon() {

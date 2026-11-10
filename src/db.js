@@ -214,6 +214,23 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_alloc_source ON lot_allocations(source, source_id);
 `);
+// Sorteo: códigos (cupones) que el administrador entrega por compra y que los clientes registran.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS raffle_codes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    code          TEXT NOT NULL UNIQUE,
+    note          TEXT,
+    order_id      INTEGER,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    registered_at TEXT,
+    name          TEXT,
+    phone         TEXT,
+    ci            TEXT,
+    winner_rank   INTEGER,
+    prize         TEXT,
+    won_at        TEXT
+  );
+`);
 // Registro de movimientos: ventas, devoluciones, compras y eliminaciones (para poder rastrear todo).
 db.exec(`
   CREATE TABLE IF NOT EXISTS activity (

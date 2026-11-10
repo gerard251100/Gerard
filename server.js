@@ -831,10 +831,11 @@ route('PATCH', '/api/orders/:id/payment', async (ctx) => {
 
 // ---- Ajustes de la tienda (QR de pago, WhatsApp)
 
-const SETTING_KEYS = ['payment_qr', 'whatsapp', 'coming_soon', 'black_friday', 'black_friday_end'];
+const SETTING_KEYS = ['payment_qr', 'whatsapp', 'coming_soon', 'black_friday', 'black_friday_end', 'raffle_on', 'raffle_date', 'raffle_prizes'];
 const DEFAULT_SETTINGS = {
   payment_qr: '/img/qr-yape.jpg', whatsapp: '59163626511', coming_soon: '',
   black_friday: '1', black_friday_end: '2026-11-30T23:59', // diseño Black Friday y fecha en que termina la oferta
+  raffle_on: '1', raffle_date: '2026-11-30T20:00', raffle_prizes: 'Yara Elixir|Asad clásico', // sorteo (premios separados por |)
 };
 
 function getSettings() {
@@ -865,6 +866,18 @@ route('PUT', '/api/admin/settings', async (ctx) => {
   if ('whatsapp' in ctx.body) upsert.run('whatsapp', text(ctx.body.whatsapp, 30).replace(/[^\d]/g, ''));
   if ('coming_soon' in ctx.body) upsert.run('coming_soon', ctx.body.coming_soon ? '1' : '');
   if ('black_friday' in ctx.body) upsert.run('black_friday', ctx.body.black_friday ? '1' : '0');
+  if ('raffle_on' in ctx.body) upsert.run('raffle_on', ctx.body.raffle_on ? '1' : '0');
+  if ('raffle_date' in ctx.body) {
+    const d = text(ctx.body.raffle_date, 20);
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d)) throw new HttpError(400, 'Fecha del sorteo inválida');
+    upsert.run('raffle_date', d);
+  }
+  if ('raffle_prizes' in ctx.body) {
+    const prizes = (Array.isArray(ctx.body.raffle_prizes) ? ctx.body.raffle_prizes : String(ctx.body.raffle_prizes).split('|'))
+      .map((x) => text(x, 80)).filter(Boolean).slice(0, 10);
+    if (!prizes.length) throw new HttpError(400, 'Escribe al menos un premio');
+    upsert.run('raffle_prizes', prizes.join('|'));
+  }
   if ('black_friday_end' in ctx.body) {
     const end = text(ctx.body.black_friday_end, 20);
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(end)) throw new HttpError(400, 'Fecha de fin inválida');
@@ -1439,6 +1452,130 @@ route('GET', '/api/admin/sales', async (ctx) => {
 route('GET', '/api/admin/activity', async (ctx) => {
   requireAdmin(ctx);
   return { activity: db.prepare(`SELECT id, datetime(at, 'localtime') AS at, action, detail, amount FROM activity ORDER BY id DESC LIMIT 300`).all() };
+});
+
+// ---- Sorteo con códigos
+
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin 0/O ni 1/I para que no se confundan
+function newRaffleCode() {
+  const pick = () => Array.from({ length: 4 }, () => CODE_CHARS[crypto.randomInt(CODE_CHARS.length)]).join('');
+  for (;;) {
+    const code = `DS-${pick()}-${pick()}`;
+    if (!db.prepare('SELECT 1 FROM raffle_codes WHERE code = ?').get(code)) return code;
+  }
+}
+const cleanCode = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^DS/, '');
+const formatCode = (raw) => (raw.length === 8 ? `DS-${raw.slice(0, 4)}-${raw.slice(4)}` : '');
+const rafflePrizes = () => getSettings().raffle_prizes.split('|').filter(Boolean);
+// Ganadores para mostrar en público: nombre corto y celular oculto.
+function publicWinners() {
+  return db.prepare('SELECT code, name, phone, winner_rank, prize FROM raffle_codes WHERE winner_rank IS NOT NULL ORDER BY winner_rank').all()
+    .map((w) => {
+      const [first, last] = String(w.name || '').trim().split(/\s+/);
+      return {
+        rank: w.winner_rank, prize: w.prize,
+        name: [first, last ? `${last[0]}.` : ''].filter(Boolean).join(' '),
+        phone: w.phone ? `•••• ${String(w.phone).replace(/\D/g, '').slice(-3)}` : '',
+        code: `${w.code.slice(0, 3)}••••${w.code.slice(7)}`,
+      };
+    });
+}
+
+route('GET', '/api/raffle', async () => {
+  const s = getSettings();
+  return { on: s.raffle_on === '1', date: s.raffle_date, prizes: rafflePrizes(), winners: publicWinners() };
+});
+
+route('POST', '/api/raffle/register', async (ctx) => {
+  if (getSettings().raffle_on !== '1') throw new HttpError(400, 'El sorteo no está activo');
+  const ipKey = `raffle:${clientIp(ctx.req)}`;
+  // Contra quien intente adivinar códigos: máximo 12 intentos fallidos cada 15 minutos.
+  if (tooMany(ipKey, 12, 15 * MINUTE)) throw new HttpError(429, 'Demasiados intentos. Espera 15 minutos.');
+  const b = ctx.body;
+  const name = text(b.name, 120);
+  const phone = text(b.phone, 40);
+  if (!name) throw new HttpError(400, 'Escribe tu nombre completo');
+  if (phone.replace(/\D/g, '').length < 7) throw new HttpError(400, 'Escribe tu número de celular');
+  const code = formatCode(cleanCode(b.code));
+  const row = code && db.prepare('SELECT * FROM raffle_codes WHERE code = ?').get(code);
+  if (!row) {
+    countHit(ipKey, 15 * MINUTE);
+    throw new HttpError(404, 'Ese código no existe. Revísalo e intenta de nuevo.');
+  }
+  if (row.registered_at) throw new HttpError(409, 'Este código ya fue registrado');
+  if (db.prepare('SELECT 1 FROM raffle_codes WHERE winner_rank IS NOT NULL').get()) throw new HttpError(400, 'El sorteo ya se realizó');
+  db.prepare(`UPDATE raffle_codes SET registered_at = datetime('now'), name = ?, phone = ?, ci = ? WHERE id = ?`)
+    .run(name, phone, text(b.ci, 30) || null, row.id);
+  const mine = db.prepare('SELECT COUNT(*) AS n FROM raffle_codes WHERE registered_at IS NOT NULL AND phone = ?').get(phone).n;
+  logActivity('sorteo', `Código ${code} registrado por ${name} (${phone})`);
+  return { ok: true, code, chances: mine };
+});
+
+route('GET', '/api/admin/raffle', async (ctx) => {
+  requireAdmin(ctx);
+  const codes = db.prepare(
+    `SELECT c.*, datetime(c.created_at, 'localtime') AS created_local, datetime(c.registered_at, 'localtime') AS registered_local,
+            o.client_name AS order_client
+     FROM raffle_codes c LEFT JOIN orders o ON o.id = c.order_id ORDER BY c.id DESC`
+  ).all();
+  return { codes, prizes: rafflePrizes(), settings: getSettings() };
+});
+
+// Generar códigos: uno o varios (por ejemplo, uno por cada compra), opcionalmente ligado a un pedido.
+route('POST', '/api/admin/raffle/codes', async (ctx) => {
+  requireAdmin(ctx);
+  const count = Math.min(200, Math.max(1, Math.floor(Number(ctx.body.count)) || 1));
+  const orderId = Number(ctx.body.order_id) || null;
+  const note = text(ctx.body.note, 160) || null;
+  if (orderId && !db.prepare('SELECT 1 FROM orders WHERE id = ?').get(orderId)) throw new HttpError(404, 'Pedido no encontrado');
+  const codes = transaction(() => Array.from({ length: count }, () => {
+    const code = newRaffleCode();
+    db.prepare('INSERT INTO raffle_codes (code, note, order_id) VALUES (?, ?, ?)').run(code, note, orderId);
+    return code;
+  }));
+  logActivity('sorteo', `Se generaron ${count} código(s)${orderId ? ` para el pedido #${orderId}` : ''}${note ? ` · ${note}` : ''}`);
+  return { codes };
+});
+
+route('DELETE', '/api/admin/raffle/codes/:id', async (ctx) => {
+  requireAdmin(ctx);
+  const row = db.prepare('SELECT * FROM raffle_codes WHERE id = ?').get(Number(ctx.params.id));
+  if (!row) throw new HttpError(404, 'Código no encontrado');
+  if (row.registered_at) requireAdminPassword(ctx); // borrar un código ya registrado pide contraseña
+  db.prepare('DELETE FROM raffle_codes WHERE id = ?').run(row.id);
+  logActivity('sorteo', `Se borró el código ${row.code}${row.name ? ` (registrado por ${row.name})` : ''}`);
+  return { ok: true };
+});
+
+// Sortear: elige al azar un ganador por premio entre los códigos registrados (una persona gana una sola vez).
+route('POST', '/api/admin/raffle/draw', async (ctx) => {
+  requireAdminPassword(ctx);
+  if (db.prepare('SELECT 1 FROM raffle_codes WHERE winner_rank IS NOT NULL').get()) throw new HttpError(400, 'El sorteo ya se realizó');
+  const prizes = rafflePrizes();
+  const pool = db.prepare('SELECT * FROM raffle_codes WHERE registered_at IS NOT NULL').all();
+  const people = new Set(pool.map((c) => String(c.phone).replace(/\D/g, '')));
+  if (people.size < prizes.length) throw new HttpError(400, `Se necesitan al menos ${prizes.length} personas registradas (hay ${people.size})`);
+  const winners = [];
+  const used = new Set();
+  transaction(() => {
+    prizes.forEach((prize, i) => {
+      const options = pool.filter((c) => !used.has(String(c.phone).replace(/\D/g, '')));
+      const pick = options[crypto.randomInt(options.length)]; // cada código registrado es una oportunidad
+      used.add(String(pick.phone).replace(/\D/g, ''));
+      db.prepare(`UPDATE raffle_codes SET winner_rank = ?, prize = ?, won_at = datetime('now') WHERE id = ?`).run(i + 1, prize, pick.id);
+      winners.push({ rank: i + 1, prize, code: pick.code, name: pick.name, phone: pick.phone });
+    });
+    logActivity('sorteo', `Sorteo realizado: ${winners.map((w) => `${w.prize} → ${w.name} (${w.code})`).join(' · ')}`);
+  });
+  return { winners };
+});
+
+// Deshacer el sorteo (por ejemplo, si se hizo de prueba).
+route('POST', '/api/admin/raffle/reset', async (ctx) => {
+  requireAdminPassword(ctx);
+  db.prepare('UPDATE raffle_codes SET winner_rank = NULL, prize = NULL, won_at = NULL').run();
+  logActivity('sorteo', 'Se anuló el resultado del sorteo');
+  return { ok: true };
 });
 
 const STATUS_NAMES = { pendiente: 'Pendiente', confirmado: 'Confirmado', preparando: 'En preparación', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };
