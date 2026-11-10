@@ -4,3 +4,6 @@ uploads/*
 !uploads/.gitkeep
 .env
 tools/
+
+# Videos para estados de WhatsApp (material de marketing, no es parte de la página)
+videos-estados/
