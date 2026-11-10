@@ -428,7 +428,8 @@ const pctOff = (off, price) => (off > 0 && price > 0 ? Math.max(1, Math.round((o
 // Etiqueta y precio con descuento de una tarjeta de perfume.
 function discountBadge(p) {
   if (!(p.discount_pct > 0)) return '';
-  return `<span class="bf-badge">${bfActive() ? '<b>BLACK FRIDAY</b>' : '<b>OFERTA</b>'}<i>-${fmtPct(p.discount_pct)}%</i></span>`;
+  // Solo dice "Oferta": el porcentaje no se muestra al cliente.
+  return '<span class="bf-badge single"><i>OFERTA</i></span>';
 }
 function priceHtml(p) {
   if (p.discount_pct > 0 && p.list_price > p.price) {
@@ -769,7 +770,7 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
               <div>
                 <div class="product-brand">${esc(p.brand || '')}</div>
                 <div style="font-family:var(--serif);font-size:1.2rem">${esc(p.name)}${p.size_ml ? ` <span class="muted small">${p.size_ml} ml</span>` : ''}</div>
-                <div class="small muted">${money(price(p))} c/u${p.discount_pct > 0 && p.list_price > price(p) ? ` <s>${money(p.list_price)}</s> <span class="bf-mini">-${fmtPct(p.discount_pct)}%</span>` : ''}${commission ? ` · comisión ${money(commission(p))} c/u` : ''}</div>
+                <div class="small muted">${money(price(p))} c/u${p.discount_pct > 0 && p.list_price > price(p) ? ` <s>${money(p.list_price)}</s> <span class="bf-mini">Oferta</span>` : ''}${commission ? ` · comisión ${money(commission(p))} c/u` : ''}</div>
               </div>
               <div class="qty">
                 <button type="button" data-step="-1" aria-label="Menos">−</button>
@@ -1814,7 +1815,7 @@ function perfumeForm(p = {}) {
       ? 'Monto que se resta al precio. Déjalo vacío o en 0 si no tiene descuento.'
       : off >= price
         ? '<span class="bf-red">El descuento debe ser menor que el precio.</span>'
-        : `Precio final: <strong class="bf-red">${money(price - off)}</strong> · en el catálogo sale la etiqueta <strong class="bf-red">-${pctOff(off, price)}%</strong>`;
+        : `Precio final: <strong class="bf-red">${money(price - off)}</strong> · en el catálogo sale la etiqueta <strong class="bf-red">OFERTA</strong> con el precio anterior tachado`;
   };
   $('#p-price', root).addEventListener('input', showFinal);
   $('#p-disc', root).addEventListener('input', showFinal);

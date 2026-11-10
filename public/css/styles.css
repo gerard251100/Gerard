@@ -1285,3 +1285,7 @@ body.bf-mode .load-orb::before { background: radial-gradient(circle, rgba(255, 4
 .loader { gap: 0.4rem; }
 .loader-text { margin-top: 0.2rem; }
 
+
+/* Etiqueta de oferta sin porcentaje */
+.bf-badge.single i { padding: 0.32rem 0.85rem; border-radius: 999px; letter-spacing: 0.18em; font-size: 0.66rem; }
+@media (max-width: 720px) { .bf-badge.single i { padding: 0.28rem 0.6rem; font-size: 0.58rem; } }
