@@ -320,6 +320,7 @@ async function router() {
   const done = showLoader(loaderTextFor(route));
   try {
     await view();
+    track('view');
   } catch (err) {
     app.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
   } finally {
@@ -515,6 +516,7 @@ app.addEventListener('click', (e) => {
 
 function addToCart(btn, card, input, id, qty) {
   cart.add(id, qty);
+  track('cart');
   // Pequeña animación en el ícono del carrito y en el botón.
   for (const el of [$('[data-cart-icon]'), btn]) {
     if (!el) continue;
@@ -1157,6 +1159,7 @@ async function renderAdmin(tab) {
   const summary = await api('/api/admin/summary');
   const tabs = [
     ['resumen', 'Resumen'],
+    ['visitas', 'Visitas'],
     ['catalogo', 'Catálogo'],
     ['stock', 'Stock'],
     ['sorteo', 'Sorteo'],
@@ -1169,7 +1172,7 @@ async function renderAdmin(tab) {
     <div id="tabBody"></div>`;
   $$('[data-tab]').forEach((b) => b.addEventListener('click', () => viewAdmin(b.dataset.tab)));
   const body = $('#tabBody');
-  const views = { resumen: adminSummary, catalogo: adminPerfumes, stock: adminStock, sorteo: adminRaffle, pedidos: adminOrders, cuenta: adminAccount };
+  const views = { resumen: adminSummary, visitas: adminVisits, catalogo: adminPerfumes, stock: adminStock, sorteo: adminRaffle, pedidos: adminOrders, cuenta: adminAccount };
   await (views[tab] || views.resumen)(body, summary);
 }
 
@@ -1199,6 +1202,8 @@ function adminSummary(body, s) {
       </div>
     </form>
     <div class="stats">
+      <div class="stat stat-link" data-go="visitas"><div class="lbl">Personas hoy en la página</div><div class="val">${s.visitorsToday}</div></div>
+      <div class="stat stat-link" data-go="visitas"><div class="lbl">En la página ahora</div><div class="val">${s.visitorsLive}</div></div>
       <div class="stat"><div class="lbl">Perfumes publicados</div><div class="val">${s.activePerfumes}</div></div>
       <div class="stat"><div class="lbl">Pedidos en curso</div><div class="val">${s.openOrders}</div></div>
       <div class="stat"><div class="lbl">Pedidos de clientes en curso</div><div class="val">${s.openCustomerOrders}</div></div>
@@ -2732,6 +2737,168 @@ function showCodes(codesList, phone = '', clientName = '') {
     </div>`);
   $('#copyCodes').addEventListener('click', () => copyText(codesList.join('\n')));
   $('#codesOk').addEventListener('click', closeModal);
+}
+
+/* =================================================================
+   Contador de visitas (propio, sin servicios externos)
+   ================================================================= */
+const visitInfo = (() => {
+  const rid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`);
+  let visitor = null;
+  let isNew = false;
+  let session = null;
+  try {
+    visitor = localStorage.getItem('ds_vid');
+    if (!visitor) { visitor = rid(); isNew = true; localStorage.setItem('ds_vid', visitor); }
+    session = sessionStorage.getItem('ds_sid');
+    if (!session) { session = rid(); sessionStorage.setItem('ds_sid', session); }
+  } catch {
+    visitor = visitor || rid();
+    session = session || rid();
+  }
+  // Etiqueta del link (?ref=instagram) y página de la que vino: solo importan en la primera página de la sesión.
+  const ref = new URLSearchParams(location.search).get('ref') || new URLSearchParams(location.search).get('utm_source') || '';
+  return { visitor, session, isNew, ref, referrer: document.referrer };
+})();
+let firstTrack = true;
+
+function track(kind = 'view') {
+  if (state.user?.role === 'admin' || location.protocol === 'file:') return; // el administrador no se cuenta
+  const body = JSON.stringify({
+    kind, path: location.hash || '#/', visitor: visitInfo.visitor, session: visitInfo.session,
+    new: visitInfo.isNew && firstTrack, ref: visitInfo.ref, referrer: visitInfo.referrer,
+  });
+  firstTrack = false;
+  try {
+    if (navigator.sendBeacon?.('/api/track', new Blob([body], { type: 'application/json' }))) return;
+  } catch { /* se usa fetch */ }
+  fetch('/api/track', { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, keepalive: true, credentials: 'same-origin' }).catch(() => {});
+}
+
+/* ---- Panel: pestaña Visitas ---- */
+const PAGE_LABELS = { '#/': 'Inicio', '#/catalogo': 'Catálogo', '#/carrito': 'Carrito', '#/mis-pedidos': 'Mis pedidos', '#/pedido': 'Seguimiento de pedido', '#/sorteo': 'Sorteo', '#/login': 'Acceso' };
+const SOURCE_ICONS = { Instagram: '📸', Facebook: '📘', TikTok: '🎵', WhatsApp: '💬', 'Estados de WhatsApp': '💬', Google: '🔎', 'Código QR': '🔳', Directo: '🔗' };
+
+async function adminVisits(body, _s, range = { key: 'today' }) {
+  const today = new Date();
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const ranges = {
+    today: () => [iso(today), iso(today)],
+    yesterday: () => { const d = new Date(today); d.setDate(d.getDate() - 1); return [iso(d), iso(d)]; },
+    week: () => { const d = new Date(today); d.setDate(d.getDate() - 6); return [iso(d), iso(today)]; },
+    month: () => [iso(new Date(today.getFullYear(), today.getMonth(), 1)), iso(today)],
+    d30: () => { const d = new Date(today); d.setDate(d.getDate() - 29); return [iso(d), iso(today)]; },
+  };
+  const [from, to] = range.key === 'custom' ? [range.from, range.to] : ranges[range.key]();
+  const a = await api(`/api/admin/analytics?from=${from}&to=${to}`);
+  const t = a.totals;
+  const pct = (n, d) => (d ? `${Math.round((n / d) * 100)}%` : '—');
+  const bar = (n, max) => `<span class="an-bar"><i style="width:${max ? Math.max(3, (n / max) * 100) : 0}%"></i></span>`;
+  const maxDay = Math.max(1, ...a.byDay.map((d) => d.visitors));
+  const maxSrc = Math.max(1, ...a.sources.map((x) => x.visitors));
+  const maxPage = Math.max(1, ...a.pages.map((x) => x.visitors));
+  const maxHour = Math.max(1, ...a.hours.map((x) => x.visitors));
+  const hourMap = Object.fromEntries(a.hours.map((h) => [h.h, h.visitors]));
+  const site = location.origin;
+
+  body.innerHTML = `
+    <div class="an-head">
+      <div class="chips">
+        ${[['today', 'Hoy'], ['yesterday', 'Ayer'], ['week', '7 días'], ['month', 'Este mes'], ['d30', '30 días']]
+          .map(([k, l]) => `<button type="button" class="chip ${range.key === k ? 'active' : ''}" data-range="${k}">${l}</button>`).join('')}
+      </div>
+      <form class="an-custom" id="anCustom">
+        <input type="date" name="from" value="${from}" aria-label="Desde"><span class="muted">a</span><input type="date" name="to" value="${to}" aria-label="Hasta">
+        <button class="btn sm" type="submit">Ver</button>
+      </form>
+      <div class="an-live"><span class="live-dot"></span> <strong>${t.live}</strong> ${t.live === 1 ? 'persona' : 'personas'} en la página ahora</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="lbl">Personas que entraron</div><div class="val">${t.visitors}</div></div>
+      <div class="stat"><div class="lbl">Nuevas</div><div class="val">${t.newVisitors}</div></div>
+      <div class="stat"><div class="lbl">Visitas</div><div class="val">${t.sessions}</div></div>
+      <div class="stat"><div class="lbl">Páginas vistas</div><div class="val">${t.views}</div></div>
+    </div>
+
+    <div class="card an-funnel">
+      <div class="eyebrow" style="margin:0">¿Compran los que entran?</div>
+      <div class="funnel">
+        <div class="f-step"><strong>${t.visitors}</strong><span>entraron</span></div>
+        <div class="f-arrow">→</div>
+        <div class="f-step"><strong>${t.catalogVisitors}</strong><span>vieron el catálogo</span><em>${pct(t.catalogVisitors, t.visitors)}</em></div>
+        <div class="f-arrow">→</div>
+        <div class="f-step"><strong>${t.cartVisitors}</strong><span>agregaron al carrito</span><em>${pct(t.cartVisitors, t.visitors)}</em></div>
+        <div class="f-arrow">→</div>
+        <div class="f-step hl"><strong>${t.orders}</strong><span>hicieron pedido</span><em>${pct(t.orders, t.visitors)}</em></div>
+      </div>
+    </div>
+
+    <div class="an-grid">
+      <div class="card">
+        <h3 style="margin-top:0">De dónde vienen</h3>
+        ${a.sources.length ? `<ul class="an-list">${a.sources.map((x) => `<li><span>${SOURCE_ICONS[x.source] || '🌐'} ${esc(x.source === 'Directo' ? 'Directo (link copiado, WhatsApp, escrito a mano)' : x.source)}</span>${bar(x.visitors, maxSrc)}<strong>${x.visitors}</strong></li>`).join('')}</ul>` : '<p class="muted small">Todavía no hay visitas en estas fechas.</p>'}
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Qué miran</h3>
+        ${a.pages.length ? `<ul class="an-list">${a.pages.map((x) => `<li><span>${esc(PAGE_LABELS[x.path] || x.path)}</span>${bar(x.visitors, maxPage)}<strong>${x.visitors}</strong></li>`).join('')}</ul>` : '<p class="muted small">Sin datos.</p>'}
+        ${a.devices.length ? `<div class="an-devices">${a.devices.map((d) => `<span>${d.device === 'Celular' ? '📱' : d.device === 'Tablet' ? '📲' : '💻'} ${esc(d.device)} <strong>${pct(d.visitors, t.visitors)}</strong></span>`).join('')}</div>` : ''}
+      </div>
+    </div>
+
+    ${a.byDay.length > 1 ? `
+      <div class="card">
+        <h3 style="margin-top:0">Personas por día</h3>
+        <div class="an-days">${a.byDay.map((d) => `<div class="an-day" title="${fmtDay(d.day)}: ${d.visitors} personas"><span class="an-day-n">${d.visitors}</span><i style="height:${(d.visitors / maxDay) * 100}%"></i><span class="an-day-l">${d.day.slice(8)}/${d.day.slice(5, 7)}</span></div>`).join('')}</div>
+      </div>` : ''}
+
+    <div class="card">
+      <h3 style="margin-top:0">A qué hora entran</h3>
+      <div class="an-hours">${Array.from({ length: 24 }, (_, h) => `<div class="an-hour" title="${h}:00 · ${hourMap[h] || 0} personas"><i style="height:${((hourMap[h] || 0) / maxHour) * 100}%"></i><span>${h % 3 === 0 ? h : ''}</span></div>`).join('')}</div>
+    </div>
+
+    <div class="card an-links">
+      <div class="eyebrow" style="margin:0">Links con etiqueta</div>
+      <h3 style="margin:0.3rem 0">Usa un link distinto en cada lugar donde compartes</h3>
+      <p class="small muted" style="margin:0 0 0.8rem">Así sabrás exactamente cuántas personas vienen de tu Instagram, de tus estados de WhatsApp, de TikTok, etc.</p>
+      <div class="an-link-form">
+        <select id="lkSource">
+          <option value="instagram">Instagram (bio o historias)</option>
+          <option value="estados">Estados de WhatsApp</option>
+          <option value="whatsapp">Mensajes de WhatsApp</option>
+          <option value="tiktok">TikTok</option>
+          <option value="facebook">Facebook</option>
+          <option value="qr">Código QR impreso</option>
+          <option value="otro">Otro (escribe el nombre)</option>
+        </select>
+        <input id="lkOther" placeholder="Ej: grupo-ventas" maxlength="30" hidden>
+        <select id="lkPage">
+          <option value="#/">Inicio</option>
+          <option value="#/catalogo">Catálogo</option>
+          <option value="#/catalogo?ofertas">Ofertas</option>
+          <option value="#/sorteo">Sorteo</option>
+        </select>
+      </div>
+      <div class="an-link-out"><code id="lkUrl"></code><button class="btn sm solid" type="button" id="lkCopy">Copiar link</button></div>
+    </div>`;
+
+  $$('[data-range]', body).forEach((c) => c.addEventListener('click', () => withBusy(null, () => adminVisits(body, null, { key: c.dataset.range }))));
+  $('#anCustom', body).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = e.target;
+    if (!f.from.value || !f.to.value || f.from.value > f.to.value) { toast('Revisa las fechas', true); return; }
+    withBusy(e.submitter, () => adminVisits(body, null, { key: 'custom', from: f.from.value, to: f.to.value }));
+  });
+  const makeLink = () => {
+    const src = $('#lkSource', body).value;
+    $('#lkOther', body).hidden = src !== 'otro';
+    const tag = src === 'otro' ? ($('#lkOther', body).value.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'otro') : src;
+    $('#lkUrl', body).textContent = `${site}/?ref=${tag}${$('#lkPage', body).value}`;
+  };
+  ['#lkSource', '#lkPage'].forEach((s) => $(s, body).addEventListener('change', makeLink));
+  $('#lkOther', body).addEventListener('input', makeLink);
+  $('#lkCopy', body).addEventListener('click', () => copyText($('#lkUrl', body).textContent));
+  makeLink();
 }
 
 function viewComingSoon() {

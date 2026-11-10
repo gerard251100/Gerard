@@ -231,6 +231,23 @@ db.exec(`
     won_at        TEXT
   );
 `);
+// Visitas a la página (contador propio, sin servicios externos).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS visits (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    at       TEXT NOT NULL DEFAULT (datetime('now')),
+    day      TEXT NOT NULL,
+    kind     TEXT NOT NULL DEFAULT 'view',  -- 'view' (página vista) o 'cart' (agregó al carrito)
+    visitor  TEXT NOT NULL,
+    session  TEXT NOT NULL,
+    path     TEXT,
+    source   TEXT,
+    device   TEXT,
+    is_new   INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_visits_day ON visits(day);
+  CREATE INDEX IF NOT EXISTS idx_visits_at ON visits(at);
+`);
 // Registro de movimientos: ventas, devoluciones, compras y eliminaciones (para poder rastrear todo).
 db.exec(`
   CREATE TABLE IF NOT EXISTS activity (

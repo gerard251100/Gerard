@@ -1024,6 +1024,8 @@ route('GET', '/api/admin/summary', async (ctx) => {
   const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
   return {
     activePerfumes: one('SELECT COUNT(*) FROM perfumes WHERE active = 1'),
+    visitorsToday: one(`SELECT COUNT(DISTINCT visitor) FROM visits WHERE kind = 'view' AND day = date('now', 'localtime')`),
+    visitorsLive: one(`SELECT COUNT(DISTINCT visitor) FROM visits WHERE at >= datetime('now', '-5 minutes')`),
     lowStock: db.prepare('SELECT id, brand, name, size_ml, stock FROM perfumes WHERE active = 1 AND stock IS NOT NULL AND stock <= 3 ORDER BY stock, name').all(),
     openOrders: one(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('entregado', 'cancelado')`),
     openCustomerOrders: one(`SELECT COUNT(*) FROM orders WHERE source = 'cliente' AND status NOT IN ('entregado', 'cancelado')`),
@@ -1576,6 +1578,90 @@ route('POST', '/api/admin/raffle/reset', async (ctx) => {
   db.prepare('UPDATE raffle_codes SET winner_rank = NULL, prize = NULL, won_at = NULL').run();
   logActivity('sorteo', 'Se anuló el resultado del sorteo');
   return { ok: true };
+});
+
+// ---- Visitas (estadísticas propias de la página)
+
+const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|whatsapp\/|telegrambot|discordbot|headless|lighthouse|curl|wget|python|node-fetch/i;
+const PAGE_KEYS = ['#/', '#/catalogo', '#/carrito', '#/mis-pedidos', '#/pedido', '#/sorteo', '#/login'];
+const SOURCE_NAMES = { instagram: 'Instagram', ig: 'Instagram', facebook: 'Facebook', fb: 'Facebook', tiktok: 'TikTok', tt: 'TikTok',
+  whatsapp: 'WhatsApp', wa: 'WhatsApp', estados: 'Estados de WhatsApp', google: 'Google', qr: 'Código QR', x: 'X (Twitter)' };
+
+// ¿De dónde vino? 1) el link con ?ref=… 2) la página anterior 3) la app desde la que se abrió (Instagram, TikTok…).
+function visitSource(ref, referrer, ua) {
+  const r = String(ref || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 30);
+  if (r) return SOURCE_NAMES[r] || r.charAt(0).toUpperCase() + r.slice(1);
+  let host = '';
+  try { host = new URL(referrer).hostname.replace(/^www\./, ''); } catch { /* sin página anterior */ }
+  if (/instagram/.test(host) || /Instagram/.test(ua)) return 'Instagram';
+  if (/facebook|fb\.me|fb\.com/.test(host) || /FBAN|FBAV|FB_IAB/.test(ua)) return 'Facebook';
+  if (/tiktok/.test(host) || /musical_ly|BytedanceWebview|TikTok/i.test(ua)) return 'TikTok';
+  if (/whatsapp|wa\.me/.test(host)) return 'WhatsApp';
+  if (/google\./.test(host)) return 'Google';
+  if (/t\.co$|twitter|x\.com/.test(host)) return 'X (Twitter)';
+  if (host && !/distintoscz|railway\.app|localhost/.test(host)) return host;
+  return 'Directo';
+}
+
+route('POST', '/api/track', async (ctx) => {
+  const ua = String(ctx.req.headers['user-agent'] || '');
+  if (BOT_UA.test(ua) || ctx.user?.role === 'admin') return { ok: true }; // no se cuentan robots ni al administrador
+  if (tooMany(`track:${clientIp(ctx.req)}`, 400, 60 * MINUTE)) return { ok: true };
+  countHit(`track:${clientIp(ctx.req)}`, 60 * MINUTE);
+  const b = ctx.body || {};
+  const id = (v) => String(v || '').replace(/[^a-z0-9-]/gi, '').slice(0, 40);
+  const visitor = id(b.visitor);
+  const session = id(b.session);
+  if (!visitor || !session) return { ok: true };
+  const kind = b.kind === 'cart' ? 'cart' : 'view';
+  const rawPath = String(b.path || '#/').split('?')[0];
+  const path = PAGE_KEYS.find((k) => k !== '#/' && rawPath.startsWith(k)) || '#/';
+  // La fuente se guarda la primera vez de cada sesión; las demás páginas de esa sesión la heredan.
+  const first = db.prepare('SELECT source FROM visits WHERE session = ? ORDER BY id LIMIT 1').get(session);
+  const source = first ? first.source : visitSource(b.ref, b.referrer, ua);
+  const device = /iPad|Tablet/i.test(ua) ? 'Tablet' : /Mobi|Android|iPhone/i.test(ua) ? 'Celular' : 'Computadora';
+  db.prepare(`INSERT INTO visits (day, kind, visitor, session, path, source, device, is_new)
+              VALUES (date('now', 'localtime'), ?, ?, ?, ?, ?, ?, ?)`)
+    .run(kind, visitor, session, path, source, device, b.new ? 1 : 0);
+  return { ok: true };
+});
+
+route('GET', '/api/admin/analytics', async (ctx) => {
+  requireAdmin(ctx);
+  const isDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+  const today = db.prepare("SELECT date('now', 'localtime') AS d").get().d;
+  const from = isDay(ctx.query.get('from')) ? ctx.query.get('from') : today;
+  const to = isDay(ctx.query.get('to')) ? ctx.query.get('to') : today;
+  const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p) || { v: 0 })[0] || 0;
+  const R = 'day BETWEEN ? AND ?';
+  const totals = {
+    visitors: one(`SELECT COUNT(DISTINCT visitor) FROM visits WHERE kind = 'view' AND ${R}`, from, to),
+    newVisitors: one(`SELECT COUNT(DISTINCT visitor) FROM visits WHERE kind = 'view' AND is_new = 1 AND ${R}`, from, to),
+    sessions: one(`SELECT COUNT(DISTINCT session) FROM visits WHERE kind = 'view' AND ${R}`, from, to),
+    views: one(`SELECT COUNT(*) FROM visits WHERE kind = 'view' AND ${R}`, from, to),
+    catalogVisitors: one(`SELECT COUNT(DISTINCT visitor) FROM visits WHERE kind = 'view' AND path = '#/catalogo' AND ${R}`, from, to),
+    cartVisitors: one(`SELECT COUNT(DISTINCT visitor) FROM visits WHERE kind = 'cart' AND ${R}`, from, to),
+    orders: one(`SELECT COUNT(*) FROM orders WHERE source = 'cliente' AND date(created_at, 'localtime') BETWEEN ? AND ?`, from, to),
+    live: one(`SELECT COUNT(DISTINCT visitor) FROM visits WHERE at >= datetime('now', '-5 minutes')`),
+  };
+  const byDay = db.prepare(
+    `SELECT day, COUNT(DISTINCT visitor) AS visitors, SUM(kind = 'view') AS views FROM visits WHERE ${R} GROUP BY day ORDER BY day`
+  ).all(from, to);
+  const pages = db.prepare(
+    `SELECT path, COUNT(*) AS views, COUNT(DISTINCT visitor) AS visitors FROM visits WHERE kind = 'view' AND ${R} GROUP BY path ORDER BY visitors DESC`
+  ).all(from, to);
+  const sources = db.prepare(
+    `SELECT source, COUNT(DISTINCT session) AS sessions, COUNT(DISTINCT visitor) AS visitors FROM visits WHERE kind = 'view' AND ${R}
+     GROUP BY source ORDER BY visitors DESC`
+  ).all(from, to);
+  const devices = db.prepare(
+    `SELECT device, COUNT(DISTINCT visitor) AS visitors FROM visits WHERE kind = 'view' AND ${R} GROUP BY device ORDER BY visitors DESC`
+  ).all(from, to);
+  const hours = db.prepare(
+    `SELECT CAST(strftime('%H', at, 'localtime') AS INTEGER) AS h, COUNT(DISTINCT visitor) AS visitors FROM visits
+     WHERE kind = 'view' AND ${R} GROUP BY h ORDER BY h`
+  ).all(from, to);
+  return { from, to, totals, byDay, pages, sources, devices, hours };
 });
 
 const STATUS_NAMES = { pendiente: 'Pendiente', confirmado: 'Confirmado', preparando: 'En preparación', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };
