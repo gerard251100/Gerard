@@ -191,6 +191,10 @@ const state = {
   tab: {},
 };
 
+// Clave de cada línea del carrito: "12" (frasco sellado) o "12:d5" (decant de 5 ml).
+const cartKey = (id, ml) => (ml ? `${id}:d${ml}` : String(id));
+const parseKey = (key) => { const [id, d] = String(key).split(':d'); return { id, ml: d ? Number(d) : null }; };
+
 const cart = {
   key() { return state.user ? `cart_${state.user.id}` : 'cart_guest'; },
   read() {
@@ -411,6 +415,7 @@ async function viewHome() {
   if (bf) startCountdown();
   else typeWriter($('#typed'), 'Tu fragancia, tu sello');
   const { perfumes } = await api('/api/catalog');
+  rememberCatalog(perfumes);
   const deals = perfumes.filter((p) => p.discount_pct > 0 && !p.sold_out).sort((a, b) => b.discount_pct - a.discount_pct);
   if (deals.length) {
     $('#deals').hidden = false;
@@ -462,7 +467,18 @@ function cardMode() {
 }
 
 function productCard(p, { mode = 'view' } = {}) {
-  const soldOut = Boolean(p.sold_out);
+  const decants = mode === 'shop' ? (p.decants || []) : [];
+  const sealedOut = Boolean(p.sold_out);
+  // Si el sellado está agotado pero hay decants, el perfume sigue disponible en decant.
+  const soldOut = sealedOut && !decants.length;
+  const startMl = sealedOut && decants.length ? decants[0].ml : '';
+  const variants = decants.length ? `
+          <div class="variants" role="group" aria-label="Presentación">
+            <button type="button" class="variant ${startMl ? '' : 'active'}" data-variant="" ${sealedOut ? 'disabled' : ''}>
+              <span>Sellado${p.size_ml ? ` ${p.size_ml} ml` : ''}</span><strong>${sealedOut ? 'Agotado' : money(p.price)}</strong></button>
+            ${decants.map((d) => `<button type="button" class="variant ${startMl === d.ml ? 'active' : ''}" data-variant="${d.ml}" data-price="${d.price}">
+              <span>Decant ${fmtMl(d.ml)} ml</span><strong>${money(d.price)}</strong></button>`).join('')}
+          </div>` : '';
   const addBlock = (label) => soldOut
     ? '<div class="product-actions"><button class="btn sm" disabled>Agotado</button></div>'
     : `
@@ -475,8 +491,8 @@ function productCard(p, { mode = 'view' } = {}) {
             <button class="btn sm solid" data-add="${p.id}">${label}</button>
           </div>`;
   return `
-    <article class="product ${soldOut ? 'sold-out' : ''} ${p.discount_pct > 0 ? 'on-sale' : ''}" data-id="${p.id}">
-      <div class="product-img">${productImage(p)}${soldOut ? '<span class="stock-badge out">Agotado</span>' : ''}${p.bestseller ? `<span class="best-badge">★ Más vendido</span>` : ''}${discountBadge(p)}</div>
+    <article class="product ${soldOut ? 'sold-out' : ''} ${p.discount_pct > 0 ? 'on-sale' : ''} ${decants.length ? 'has-decants' : ''}" data-id="${p.id}" data-ml="${startMl}">
+      <div class="product-img">${productImage(p)}${soldOut ? '<span class="stock-badge out">Agotado</span>' : ''}${p.bestseller ? `<span class="best-badge">★ Más vendido</span>` : ''}${discountBadge(p)}${decants.length ? '<span class="decant-badge">Decants</span>' : ''}</div>
       <div class="product-body">
         <div class="product-brand">${esc(p.brand || 'Perfume')}</div>
         <div class="product-name">${esc(p.name)}</div>
@@ -488,13 +504,25 @@ function productCard(p, { mode = 'view' } = {}) {
             <div><div class="lbl">Tu comisión</div><div class="val gold">${money(p.commission)}</div></div>
           </div>
           ${addBlock('Agregar')}`
-        : `${priceHtml(p)}${mode === 'shop' ? addBlock('Al carrito') : ''}`}
+        : `<div class="price-slot">${startMl ? `<div class="product-price">${money(decants[0].price)}<small class="decant-tag">Decant ${fmtMl(startMl)} ml</small></div>` : priceHtml(p)}</div>${variants}${mode === 'shop' ? addBlock('Al carrito') : ''}`}
       </div>
     </article>`;
 }
 
 // Botones de cantidad y "agregar al carrito" de cualquier tarjeta de perfume.
 app.addEventListener('click', (e) => {
+  const v = e.target.closest('[data-variant]');
+  if (v && !v.disabled) {
+    const card = v.closest('.product');
+    card.dataset.ml = v.dataset.variant;
+    $$('[data-variant]', card).forEach((b) => b.classList.toggle('active', b === v));
+    const slot = $('.price-slot', card);
+    const p = catalogById[card.dataset.id];
+    slot.innerHTML = v.dataset.variant
+      ? `<div class="product-price">${money(Number(v.dataset.price))}<small class="decant-tag">Decant ${fmtMl(Number(v.dataset.variant))} ml</small></div>`
+      : (p ? priceHtml(p) : '');
+    return;
+  }
   const btn = e.target.closest('[data-qty], [data-add]');
   const card = btn && btn.closest('.product');
   if (!card) return;
@@ -505,16 +533,18 @@ app.addEventListener('click', (e) => {
   }
   const qty = Math.max(1, Math.min(999, Math.floor(Number(input.value)) || 1));
   const id = btn.dataset.add;
+  const ml = Number(card.dataset.ml) || null;
+  const key = cartKey(id, ml);
   // Se consulta al servidor si alcanza el stock (el número exacto solo lo ve el administrador).
   btn.disabled = true;
-  hasStock(id, (cart.read()[id] || 0) + qty).then((ok) => {
+  hasStock(id, (cart.read()[key] || 0) + qty, ml).then((ok) => {
     btn.disabled = false;
     if (!ok) return;
-    addToCart(btn, card, input, id, qty);
+    addToCart(btn, card, input, key, qty, ml);
   });
 });
 
-function addToCart(btn, card, input, id, qty) {
+function addToCart(btn, card, input, id, qty, ml = null) {
   cart.add(id, qty);
   track('cart');
   // Pequeña animación en el ícono del carrito y en el botón.
@@ -527,12 +557,18 @@ function addToCart(btn, card, input, id, qty) {
   input.value = 1;
   const tab = state.user?.role === 'vendor' && $$('.tab')[1];
   if (tab) tab.textContent = `Carrito (${cart.count()})`;
-  toast(`Agregado al carrito (${qty})`);
+  toast(`${ml ? `Decant ${fmtMl(ml)} ml` : 'Perfume'} agregado al carrito (${qty})`);
 }
 
-async function hasStock(id, quantity) {
+// 5 -> "5", 2.5 -> "2,5"
+const fmtMl = (n) => String(n).replace('.', ',');
+// Perfumes del catálogo por id (para cambiar el precio al elegir Sellado o Decant).
+const catalogById = {};
+function rememberCatalog(perfumes) { perfumes.forEach((p) => { catalogById[p.id] = p; }); }
+
+async function hasStock(id, quantity, decantMl = null) {
   try {
-    const { ok, message } = await api('/api/catalog/check', { method: 'POST', body: { perfume_id: Number(id), quantity } });
+    const { ok, message } = await api('/api/catalog/check', { method: 'POST', body: { perfume_id: Number(id), quantity, decant_ml: decantMl } });
     if (!ok) toast(message, true);
     return ok;
   } catch (err) {
@@ -546,6 +582,7 @@ const brandOf = (p) => (p.brand || '').trim() || 'Otras marcas';
 // Buscador + filtros por categoría y por marca.
 function catalogFilters(perfumes, onChange) {
   const hasDeals = perfumes.some((p) => p.discount_pct > 0);
+  const hasDecants = perfumes.some((p) => p.decants?.length);
   const startDeals = hasDeals && location.hash.includes('ofertas');
   const categories = [...new Set(perfumes.map((p) => p.category).filter(Boolean))];
   const counts = {};
@@ -557,6 +594,7 @@ function catalogFilters(perfumes, onChange) {
       <div class="chips" data-group="cat">
         <button class="chip ${startDeals ? '' : 'active'}" data-val="">Todos</button>
         ${hasDeals ? `<button class="chip chip-deal ${startDeals ? 'active' : ''}" data-val="__ofertas">${bfActive() ? '🔥 Black Friday' : '🔥 Ofertas'}</button>` : ''}
+        ${hasDecants ? '<button class="chip chip-decant" data-val="__decants">💧 Decants</button>' : ''}
         ${categories.map((c) => `<button class="chip" data-val="${esc(c)}">${esc(c)}</button>`).join('')}
       </div>
     </div>
@@ -573,11 +611,11 @@ function catalogFilters(perfumes, onChange) {
     const apply = () => {
       const q = $('#q', root).value.trim().toLowerCase();
       const list = perfumes.filter((p) =>
-        (!sel.cat || (sel.cat === '__ofertas' ? p.discount_pct > 0 : p.category === sel.cat)) &&
+        (!sel.cat || (sel.cat === '__ofertas' ? p.discount_pct > 0 : sel.cat === '__decants' ? p.decants?.length > 0 : p.category === sel.cat)) &&
         (!sel.brand || brandOf(p) === sel.brand) &&
         (!q || `${p.name} ${p.brand} ${p.description}`.toLowerCase().includes(q)));
       // Sin marca elegida ni búsqueda: el catálogo se muestra separado por marca.
-      onChange(list, { grouped: !sel.brand && !q && sel.cat !== '__ofertas' && brands.length > 1 });
+      onChange(list, { grouped: !sel.brand && !q && !sel.cat.startsWith('__') && brands.length > 1 });
     };
     $('#q', root).addEventListener('input', apply);
     $$('[data-group]', root).forEach((group) => {
@@ -609,6 +647,7 @@ function productGrid(list, mode, { grouped } = {}) {
 async function viewCatalog() {
   app.innerHTML = `${bfStrip('Descuentos especiales en perfumes originales · toca <u>Black Friday</u> para ver solo las ofertas')}<div class="section-head"><div><div class="eyebrow">Colección</div><h2>Catálogo</h2></div></div><div id="catalog"></div>`;
   const { perfumes } = await api('/api/catalog');
+  rememberCatalog(perfumes);
   const root = $('#catalog');
   if (!perfumes.length) {
     root.innerHTML = '<div class="empty">Aún no hay perfumes en el catálogo.</div>';
@@ -754,12 +793,17 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
     const prev = $('#orderForm', body);
     const saved = prev ? $$('input, select, textarea', prev).map((el) => (el.type === 'radio' ? el.checked : el.value)) : null;
     const items = cart.read();
-    // Quitar del carrito los perfumes que ya no están activos.
-    const stale = Object.keys(items).filter((id) => !byId[id]);
-    if (stale.length) { stale.forEach((id) => delete items[id]); cart.write(items); }
-    const lines = Object.entries(items).map(([id, qty]) => ({ p: byId[id], qty }));
-    const total = lines.reduce((sum, l) => sum + price(l.p) * l.qty, 0);
-    const savings = lines.reduce((sum, l) => sum + (l.p.list_price > price(l.p) ? (l.p.list_price - price(l.p)) * l.qty : 0), 0);
+    const decantOf = (key) => { const { id, ml } = parseKey(key); return ml ? (byId[id]?.decants || []).find((d) => d.ml === ml) : null; };
+    // Quitar del carrito los perfumes (o decants) que ya no están disponibles.
+    const stale = Object.keys(items).filter((key) => { const { id, ml } = parseKey(key); return !byId[id] || (ml && !decantOf(key)); });
+    if (stale.length) { stale.forEach((key) => delete items[key]); cart.write(items); }
+    const lines = Object.entries(items).map(([key, qty]) => {
+      const { id, ml } = parseKey(key);
+      const d = decantOf(key);
+      return { key, p: byId[id], qty, ml, unit: d ? d.price : price(byId[id]) };
+    });
+    const total = lines.reduce((sum, l) => sum + l.unit * l.qty, 0);
+    const savings = lines.reduce((sum, l) => sum + (!l.ml && l.p.list_price > l.unit ? (l.p.list_price - l.unit) * l.qty : 0), 0);
     const totalCommission = commission ? lines.reduce((sum, l) => sum + commission(l.p) * l.qty, 0) : 0;
     const tab = state.user?.role === 'vendor' && $$('.tab')[1];
     if (tab) tab.textContent = `Carrito${cart.count() ? ` (${cart.count()})` : ''}`;
@@ -772,12 +816,12 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
       <div class="cart-layout">
         <div class="card">
           <h3>Productos</h3>
-          ${lines.map(({ p, qty }) => `
-            <div class="cart-line" data-id="${p.id}">
+          ${lines.map(({ key, p, qty, ml, unit }) => `
+            <div class="cart-line" data-id="${key}">
               <div>
                 <div class="product-brand">${esc(p.brand || '')}</div>
-                <div style="font-family:var(--serif);font-size:1.2rem">${esc(p.name)}${p.size_ml ? ` <span class="muted small">${p.size_ml} ml</span>` : ''}</div>
-                <div class="small muted">${money(price(p))} c/u${p.discount_pct > 0 && p.list_price > price(p) ? ` <s>${money(p.list_price)}</s> <span class="bf-mini">Oferta</span>` : ''}${commission ? ` · comisión ${money(commission(p))} c/u` : ''}</div>
+                <div style="font-family:var(--serif);font-size:1.2rem">${esc(p.name)} ${ml ? `<span class="decant-tag">Decant ${fmtMl(ml)} ml</span>` : p.size_ml ? `<span class="muted small">${p.size_ml} ml</span>` : ''}</div>
+                <div class="small muted">${money(unit)} c/u${!ml && p.discount_pct > 0 && p.list_price > unit ? ` <s>${money(p.list_price)}</s> <span class="bf-mini">Oferta</span>` : ''}${commission ? ` · comisión ${money(commission(p))} c/u` : ''}</div>
               </div>
               <div class="qty">
                 <button type="button" data-step="-1" aria-label="Menos">−</button>
@@ -803,9 +847,11 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
     syncDelivery(form);
 
     // Al subir la cantidad se confirma que haya existencias.
-    const setQty = async (id, next) => {
-      if (next > (cart.read()[id] || 0) && !(await hasStock(id, next))) { draw(); return; }
-      cart.set(id, next);
+    const setQty = async (key, next) => {
+      const { id, ml } = parseKey(key);
+      if (next > (cart.read()[key] || 0) && !(await hasStock(id, next, ml))) { draw(); return; }
+      const id_ = key; // la línea del carrito se guarda con su clave (sellado o decant)
+      cart.set(id_, next);
       draw();
     };
     $$('.cart-line', body).forEach((line) => {
@@ -825,7 +871,7 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
       e.preventDefault();
       const payload = {
         ...formData(e.target),
-        items: lines.map(({ p, qty }) => ({ perfume_id: p.id, quantity: qty })),
+        items: lines.map(({ p, qty, ml }) => ({ perfume_id: p.id, quantity: qty, decant_ml: ml })),
       };
       withBusy(e.submitter, () => onSubmit(payload));
     });
@@ -1281,6 +1327,7 @@ async function adminPerfumes(body) {
             <tr data-row-id="${p.id}" data-search="${esc(`${p.name} ${p.brand || ''} ${p.category || ''}`.toLowerCase())}">
               <td class="cell-thumb">${p.image ? `<img class="thumb" src="${esc(p.image)}" alt="">` : '<div class="thumb"></div>'}</td>
               <td class="cell-title"><strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || '')}${p.size_ml ? ` · ${p.size_ml} ml` : ''}</div>
+                ${p.decants_on ? `<div class="small decant-note">💧 Decants: ${(() => { try { return JSON.parse(p.decants || '[]').map((d) => `${fmtMl(d.ml)} ml ${money(d.price)}`).join(' · '); } catch { return ''; } })()}</div>` : ''}
                 <button type="button" class="best-toggle ${p.bestseller ? 'on' : ''}" data-best="${p.id}" title="Mostrar en «Los más vendidos» del inicio">${p.bestseller ? '★ Más vendido' : '☆ Marcar como más vendido'}</button></td>
               <td class="muted" data-label="Categoría">${esc(p.category || '—')}</td>
               <td class="num" data-label="Precio">${money(p.suggested_price)}</td>
@@ -1807,6 +1854,14 @@ function perfumeForm(p = {}) {
         </div>
         <label class="checkbox field full"><input type="checkbox" name="active" ${p.active === 0 ? '' : 'checked'}> Publicado (visible en el catálogo)</label>
         <label class="checkbox field full"><input type="checkbox" name="bestseller" ${p.bestseller ? 'checked' : ''}> ★ Mostrar en «Los más vendidos» del inicio</label>
+        <div class="field full decant-box">
+          <label class="checkbox"><input type="checkbox" name="decants_on" id="p-dec-on" ${p.decants_on ? 'checked' : ''}> 💧 Vender este perfume en decants</label>
+          <div class="decant-rows" id="p-dec-rows" ${p.decants_on ? '' : 'hidden'}>
+            <div class="small muted">Presentaciones (ml y precio de cada decant). El frasco sellado se sigue vendiendo con su precio normal.</div>
+            <div id="p-dec-list"></div>
+            <button type="button" class="btn sm" id="p-dec-add">+ Agregar presentación</button>
+          </div>
+        </div>
         <div class="field full"><label for="p-avail">Disponibilidad</label>
           <select id="p-avail" name="availability">
             <option value="auto" ${(p.availability || 'auto') === 'auto' ? 'selected' : ''}>Según stock (se agota sola al llegar a 0)</option>
@@ -1820,6 +1875,23 @@ function perfumeForm(p = {}) {
       </div>
     </form>`);
 
+  // Decants: filas de ml + precio.
+  const decList = $('#p-dec-list', root);
+  let decants = [];
+  try { decants = JSON.parse(p.decants || '[]'); } catch { decants = []; }
+  const decRow = (d = {}) => {
+    const row = document.createElement('div');
+    row.className = 'decant-row';
+    row.innerHTML = `
+      <div class="field"><label>ml</label><input type="number" min="1" max="200" step="0.5" data-dml value="${esc(d.ml ?? '')}" placeholder="Ej: 5"></div>
+      <div class="field"><label>Precio (Bs)</label><input type="number" min="0" step="0.01" data-dprice value="${esc(d.price ?? '')}" placeholder="Ej: 50"></div>
+      <button type="button" class="btn sm ghost danger" aria-label="Quitar">×</button>`;
+    $('button', row).addEventListener('click', () => row.remove());
+    decList.append(row);
+  };
+  (decants.length ? decants : [{ ml: 5 }, { ml: 10 }]).forEach(decRow);
+  $('#p-dec-add', root).addEventListener('click', () => decRow());
+  $('#p-dec-on', root).addEventListener('change', (e) => { $('#p-dec-rows', root).hidden = !e.target.checked; });
   // Vista previa del precio con descuento.
   const showFinal = () => {
     const price = Number($('#p-price', root).value) || 0;
@@ -1855,6 +1927,11 @@ function perfumeForm(p = {}) {
     const data = formData(e.target);
     data.active = e.target.active.checked;
     data.bestseller = e.target.bestseller.checked;
+    data.decants_on = e.target.decants_on.checked;
+    data.decants = $$('.decant-row', e.target)
+      .map((r) => ({ ml: $('[data-dml]', r).value, price: $('[data-dprice]', r).value }))
+      .filter((d) => d.ml !== '' || d.price !== '');
+    if (data.decants_on && !data.decants.some((d) => d.ml && d.price)) { toast('Pon al menos un decant con sus ml y su precio', true); return; }
     withBusy(e.submitter, async () => {
       const { perfume } = await api(editing ? `/api/admin/perfumes/${p.id}` : '/api/admin/perfumes', { method: editing ? 'PUT' : 'POST', body: data });
       closeModal();

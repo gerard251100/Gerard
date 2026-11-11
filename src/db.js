@@ -248,6 +248,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_visits_day ON visits(day);
   CREATE INDEX IF NOT EXISTS idx_visits_at ON visits(at);
 `);
+// Decants: el administrador activa por perfume las presentaciones (ml y precio) que vende en decant.
+for (const [col, def] of [['decants_on', 'INTEGER NOT NULL DEFAULT 0'], ['decants', 'TEXT']]) {
+  if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE perfumes ADD COLUMN ${col} ${def}`);
+}
+// Una línea de pedido de decant guarda sus ml (no descuenta frascos sellados del stock).
+if (!db.prepare('PRAGMA table_info(order_items)').all().some((c) => c.name === 'decant_ml')) {
+  db.exec('ALTER TABLE order_items ADD COLUMN decant_ml INTEGER');
+}
 // Registro de movimientos: ventas, devoluciones, compras y eliminaciones (para poder rastrear todo).
 db.exec(`
   CREATE TABLE IF NOT EXISTS activity (

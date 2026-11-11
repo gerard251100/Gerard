@@ -300,6 +300,34 @@ function finalPrice(p) {
   const off = Math.min(Number(p.suggested_price) || 0, Math.max(0, Number(p.discount_bs) || 0));
   return Math.round((p.suggested_price - off) * 100) / 100;
 }
+// Presentaciones de decant activas de un perfume: [{ ml, price }] (vacío si no vende decants).
+function decantSizes(p) {
+  if (!p || !p.decants_on) return [];
+  try {
+    const list = JSON.parse(p.decants || '[]');
+    return Array.isArray(list) ? list.filter((d) => d.ml > 0 && d.price > 0) : [];
+  } catch { return []; }
+}
+// Valida las presentaciones que manda el administrador.
+function decantsValue(value) {
+  let list = value;
+  if (typeof list === 'string') { try { list = JSON.parse(list || '[]'); } catch { list = []; } }
+  if (!Array.isArray(list)) list = [];
+  const seen = new Set();
+  const out = [];
+  for (const d of list.slice(0, 8)) {
+    if ((d?.ml === '' || d?.ml == null) && (d?.price === '' || d?.price == null)) continue;
+    const ml = Math.round(Number(d.ml) * 10) / 10;
+    const price = money(d.price);
+    if (!(ml > 0 && ml <= 200)) throw new HttpError(400, 'Cada decant necesita sus ml (por ejemplo 5 o 10)');
+    if (!(price > 0)) throw new HttpError(400, `Pon el precio del decant de ${ml} ml`);
+    if (seen.has(ml)) throw new HttpError(400, `El decant de ${ml} ml está repetido`);
+    seen.add(ml);
+    out.push({ ml, price });
+  }
+  return out.sort((a, b) => a.ml - b.ml);
+}
+
 // Porcentaje que representa el descuento (para la etiqueta del catálogo).
 function discountPct(p) {
   const off = Number(p.discount_bs) || 0;
@@ -308,7 +336,7 @@ function discountPct(p) {
 }
 
 // El stock exacto solo lo ve el administrador; al público solo se le dice si está agotado.
-const PUBLIC_FIELDS = `id, name, brand, category, size_ml, description, image, bestseller,
+const PUBLIC_FIELDS = `id, name, brand, category, size_ml, description, image, bestseller, decants_on, decants,
   CASE availability WHEN 'soldout' THEN 1 WHEN 'available' THEN 0 ELSE (stock IS NOT NULL AND stock <= 0) END AS sold_out`;
 const AVAILABILITY = ['auto', 'available', 'soldout'];
 
@@ -323,8 +351,9 @@ route('GET', '/api/catalog', async () => ({
   perfumes: db
     .prepare(`SELECT ${PUBLIC_FIELDS}, suggested_price, discount_bs FROM perfumes WHERE active = 1 ORDER BY brand, name`)
     .all()
-    .map(({ suggested_price, discount_bs, ...p }) => ({
+    .map(({ suggested_price, discount_bs, decants_on, decants, ...p }) => ({
       ...p,
+      decants: decantSizes({ decants_on, decants }),
       price: finalPrice({ suggested_price, discount_bs }),
       list_price: suggested_price,
       discount_bs: discount_bs > 0 ? discount_bs : 0,
@@ -336,9 +365,14 @@ route('GET', '/api/catalog', async () => ({
 route('POST', '/api/catalog/check', async (ctx) => {
   const id = Number(ctx.body.perfume_id);
   const qty = Math.floor(Number(ctx.body.quantity));
-  const p = db.prepare('SELECT name, stock, availability FROM perfumes WHERE id = ? AND active = 1').get(id);
+  const p = db.prepare('SELECT name, stock, availability, decants_on, decants FROM perfumes WHERE id = ? AND active = 1').get(id);
   if (!p) return { ok: false, message: 'Este perfume ya no está disponible' };
   if (!Number.isFinite(qty) || qty < 1) return { ok: false, message: 'Cantidad inválida' };
+  // Los decants no usan el stock de frascos sellados: basta con que esa presentación esté activa.
+  if (ctx.body.decant_ml) {
+    return decantSizes(p).some((d) => d.ml === Number(ctx.body.decant_ml))
+      ? { ok: true } : { ok: false, message: `El decant de ${p.name} ya no está disponible` };
+  }
   if (!canSell(p, qty)) return { ok: false, message: noStock(p.name) };
   return { ok: true };
 });
@@ -416,7 +450,8 @@ function releaseLots(source, sourceId, qty = null) {
 }
 
 function takeStock(orderId) {
-  const items = db.prepare('SELECT perfume_id, perfume_name, SUM(quantity) AS qty FROM order_items WHERE order_id = ? GROUP BY perfume_id').all(orderId);
+  // Solo los frascos sellados descuentan stock (los decants salen de un frasco abierto).
+  const items = db.prepare('SELECT perfume_id, perfume_name, SUM(quantity) AS qty FROM order_items WHERE order_id = ? AND decant_ml IS NULL GROUP BY perfume_id').all(orderId);
   const getStock = db.prepare('SELECT stock, availability FROM perfumes WHERE id = ?');
   const take = db.prepare('UPDATE perfumes SET stock = stock - ? WHERE id = ? AND stock IS NOT NULL');
   for (const it of items) {
@@ -430,7 +465,7 @@ function takeStock(orderId) {
   }
   // Costo real de cada línea según los lotes de compra.
   const setCost = db.prepare('UPDATE order_items SET unit_cost = ? WHERE id = ?');
-  for (const it of db.prepare('SELECT id, perfume_id, quantity, unit_cost FROM order_items WHERE order_id = ?').all(orderId)) {
+  for (const it of db.prepare('SELECT id, perfume_id, quantity, unit_cost FROM order_items WHERE order_id = ? AND decant_ml IS NULL').all(orderId)) {
     const cost = consumeLots(it.perfume_id, it.quantity, 'item', it.id);
     if (cost != null) setCost.run(cost, it.id);
   }
@@ -440,7 +475,7 @@ function takeStock(orderId) {
 function returnStock(orderId) {
   const order = db.prepare('SELECT stock_taken FROM orders WHERE id = ?').get(orderId);
   if (!order || !order.stock_taken) return;
-  const items = db.prepare('SELECT perfume_id, SUM(quantity) AS qty FROM order_items WHERE order_id = ? GROUP BY perfume_id').all(orderId);
+  const items = db.prepare('SELECT perfume_id, SUM(quantity) AS qty FROM order_items WHERE order_id = ? AND decant_ml IS NULL GROUP BY perfume_id').all(orderId);
   const give = db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL');
   for (const it of items) if (it.perfume_id) give.run(it.qty, it.perfume_id);
   for (const it of db.prepare('SELECT id FROM order_items WHERE order_id = ?').all(orderId)) releaseLots('item', it.id);
@@ -490,11 +525,20 @@ function createOrder(b, vendor) {
     if (!Number.isFinite(qty) || qty < 1 || qty > 999) throw new HttpError(400, 'Cantidad inválida');
     const p = getPerfume.get(Number(it.perfume_id));
     if (!p) throw new HttpError(400, 'Uno de los perfumes ya no está disponible');
+    if (it.decant_ml) {
+      const d = decantSizes(p).find((x) => x.ml === Number(it.decant_ml));
+      if (!d) throw new HttpError(409, `El decant de ${p.name} ya no está disponible`);
+      // Costo del decant: proporcional al precio de compra del frasco.
+      const cost = p.cost != null && p.size_ml ? Math.round((p.cost * d.ml / p.size_ml) * 100) / 100 : null;
+      const label = [p.brand, p.name, `Decant ${d.ml} ml`].filter(Boolean).join(' · ');
+      return { p, qty, price: d.price, label, decantMl: d.ml, cost, commission: 0 };
+    }
     if (!canSell(p, qty)) throw new HttpError(409, noStock(p.name));
-    return { p, qty, commission: vendor ? p.commission : 0 };
+    const label = [p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · ');
+    return { p, qty, price: finalPrice(p), label, decantMl: null, cost: p.cost ?? null, commission: vendor ? p.commission : 0 };
   });
 
-  const total = items.reduce((sum, { p, qty }) => sum + finalPrice(p) * qty, 0);
+  const total = items.reduce((sum, { price, qty }) => sum + price * qty, 0);
   const totalCommission = items.reduce((sum, { commission, qty }) => sum + commission * qty, 0);
   const token = newToken(); // enlace de seguimiento (también para los clientes de los vendedores)
 
@@ -523,12 +567,11 @@ function createOrder(b, vendor) {
         delivery.recipientPhone
       );
     const insertItem = db.prepare(
-      `INSERT INTO order_items (order_id, perfume_id, perfume_name, quantity, unit_price, unit_commission, unit_cost)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO order_items (order_id, perfume_id, perfume_name, quantity, unit_price, unit_commission, unit_cost, decant_ml)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    for (const { p, qty, commission } of items) {
-      const label = [p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · ');
-      insertItem.run(lastInsertRowid, p.id, label, qty, finalPrice(p), commission, p.cost ?? null);
+    for (const { p, qty, price, label, decantMl, cost, commission } of items) {
+      insertItem.run(lastInsertRowid, p.id, label, qty, price, commission, cost, decantMl);
     }
     takeStock(lastInsertRowid);
     db.prepare(`INSERT INTO order_history (order_id, status, note) VALUES (?, 'pendiente', 'Pedido creado')`).run(
@@ -783,6 +826,7 @@ route('POST', '/api/orders/:id/return', async (ctx) => {
     if (order.stock_taken) {
       const give = db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL');
       for (const r of returns) {
+        if (r.it.decant_ml) continue; // un decant devuelto no vuelve al stock de frascos sellados
         if (r.it.perfume_id) give.run(r.qty, r.it.perfume_id);
         releaseLots('item', r.it.id, r.qty); // vuelven a su lote de compra
       }
@@ -1088,13 +1132,15 @@ function perfumeFields(b) {
     text(b.description, 2000),
     text(b.image, 500),
     money(b.suggested_price),
-    money(b.commission),
+    money(b.commission ?? 0), // ya no hay vendedores: sin comisión si no viene
     b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
     stockValue(b.stock),
     costValue(b.cost),
     discountValue(b.discount_bs, money(b.suggested_price)),
     b.bestseller === true || b.bestseller === 1 || b.bestseller === '1' || b.bestseller === 'on' ? 1 : 0,
     AVAILABILITY.includes(b.availability) ? b.availability : 'auto',
+    b.decants_on === true || b.decants_on === 1 || b.decants_on === '1' || b.decants_on === 'on' ? 1 : 0,
+    JSON.stringify(decantsValue(b.decants)),
   ];
 }
 
@@ -1130,8 +1176,8 @@ route('POST', '/api/admin/perfumes', async (ctx) => {
   requireAdmin(ctx);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, cost, discount_bs, bestseller, availability)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO perfumes (name, brand, category, size_ml, description, image, suggested_price, commission, active, stock, cost, discount_bs, bestseller, availability, decants_on, decants)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(...perfumeFields(ctx.body));
   return { perfume: db.prepare('SELECT * FROM perfumes WHERE id = ?').get(lastInsertRowid) };
@@ -1143,7 +1189,7 @@ route('PUT', '/api/admin/perfumes/:id', async (ctx) => {
   const { changes } = db
     .prepare(
       `UPDATE perfumes SET name = ?, brand = ?, category = ?, size_ml = ?, description = ?, image = ?,
-              suggested_price = ?, commission = ?, active = ?, stock = ?, cost = ?, discount_bs = ?, bestseller = ?, availability = ? WHERE id = ?`
+              suggested_price = ?, commission = ?, active = ?, stock = ?, cost = ?, discount_bs = ?, bestseller = ?, availability = ?, decants_on = ?, decants = ? WHERE id = ?`
     )
     .run(...perfumeFields(ctx.body), id);
   if (!changes) throw new HttpError(404, 'Perfume no encontrado');
