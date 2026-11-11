@@ -1443,3 +1443,74 @@ body.bf-mode .an-day i, body.bf-mode .an-hour i { background: linear-gradient(18
   .variant strong { font-size: 0.8rem; white-space: nowrap; }
   .price-slot .decant-tag { margin: 0.25rem 0 0; display: table; }
 }
+
+/* ---- Combos ---- */
+.combo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.2rem; }
+.combo-card { position: relative; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 22px; overflow: hidden; background: linear-gradient(160deg, #0d0d0d, #000 60%); transition: transform 0.3s, box-shadow 0.3s; }
+.combo-card:hover { transform: translateY(-3px); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--gold); }
+.combo-card.sold-out { opacity: 0.6; }
+.combo-visual { position: relative; aspect-ratio: 16 / 10; background: #050505; overflow: hidden; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--line-soft); }
+.combo-visual > img { width: 100%; height: 100%; object-fit: cover; }
+.combo-visual > img.placeholder-emblem { width: 34%; height: auto; object-fit: contain; opacity: 0.35; }
+.combo-visual .stock-badge { position: absolute; top: 0.7rem; right: 0.7rem; }
+.combo-mosaic { display: grid; width: 100%; height: 100%; gap: 2px; }
+.combo-mosaic.n2 { grid-template-columns: 1fr 1fr; }
+.combo-mosaic.n3 { grid-template-columns: 1fr 1fr 1fr; }
+.combo-mosaic.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.combo-mosaic img { width: 100%; height: 100%; object-fit: cover; min-height: 0; }
+.combo-badge { position: absolute; top: 0.7rem; left: 0.7rem; padding: 0.3rem 0.75rem; border-radius: 999px; background: var(--gold); color: #000; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; }
+.combo-badge.inline { position: static; display: inline-block; font-size: 0.58rem; padding: 0.15rem 0.55rem; }
+body.bf-mode .combo-badge { background: var(--bf); color: #fff; }
+body.bf-mode .combo-card:hover { box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--bf); }
+.combo-body { padding: 1.1rem 1.2rem 1.2rem; display: flex; flex-direction: column; gap: 0.5rem; flex: 1; }
+.combo-kind { font-size: 0.66rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); }
+.combo-name { margin: 0; font-size: 1.6rem; }
+.combo-desc { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.combo-opts { list-style: none; margin: 0.2rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.combo-opts li { font-size: 0.74rem; padding: 0.25rem 0.6rem; border: 1px solid var(--line-soft); border-radius: 999px; }
+.combo-opts li span:first-child { color: var(--muted); }
+.combo-opts li.off { opacity: 0.45; text-decoration: line-through; }
+.combo-foot { margin-top: auto; padding-top: 0.6rem; display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; flex-wrap: wrap; }
+.combo-foot .product-price { font-size: 1.5rem; }
+.combo-choice { color: #d6d6d6; margin: 0.15rem 0; }
+#catCombos { margin-top: 0; }
+/* Ventana para elegir */
+.pick-list { display: grid; gap: 0.5rem; max-height: 52vh; overflow-y: auto; padding-right: 0.2rem; }
+.pick-row { display: grid; grid-template-columns: 52px 1fr auto; gap: 0.8rem; align-items: center; padding: 0.5rem 0.7rem; border: 1px solid var(--line-soft); border-radius: 14px; transition: border-color 0.2s, background 0.2s; }
+.pick-row.picked { border-color: var(--gold); background: rgba(217, 200, 160, 0.08); }
+body.bf-mode .pick-row.picked { border-color: var(--bf); background: var(--bf-soft); }
+.pick-row.off { opacity: 0.45; }
+.pick-img { width: 52px; height: 52px; border-radius: 10px; overflow: hidden; background: #111; }
+.pick-img img { width: 100%; height: 100%; object-fit: cover; }
+.pick-name { font-family: var(--serif); font-size: 1.05rem; }
+.pick-row .qty input { width: 2.4rem; }
+.pick-foot { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 1rem; flex-wrap: wrap; }
+/* Panel */
+.combo-admin-list { display: grid; gap: 1rem; }
+.combo-admin.is-off { opacity: 0.6; }
+.combo-admin-head { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
+.combo-admin-status { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.combo-admin-price { font-family: var(--serif); font-size: 1.4rem; }
+.combo-admin .combo-opts { margin: 0.8rem 0; }
+.combo-rows { display: grid; gap: 0.5rem; }
+.combo-row { display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.5rem; align-items: center; }
+.seg { display: flex; gap: 1rem; flex-wrap: wrap; padding-top: 0.4rem; }
+.seg label { display: flex; align-items: center; gap: 0.4rem; text-transform: none; letter-spacing: normal; font-size: 0.9rem; color: var(--fg); }
+.seg input { width: auto; }
+.ok-text { color: var(--ok); }
+[hidden].field { display: none; }
+@media (max-width: 640px) {
+  /* En el celular los combos se deslizan de lado para no tapar el catálogo. */
+  .combo-grid { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 0.8rem; margin: 0 -16px; padding: 0.2rem 16px 0.8rem; scrollbar-width: none; }
+  .combo-grid::-webkit-scrollbar { display: none; }
+  .combo-card { flex: 0 0 86%; scroll-snap-align: start; }
+  .combo-grid:has(> .combo-card:only-child) .combo-card { flex-basis: 100%; }
+  .combo-visual { aspect-ratio: 16 / 8; }
+  .combo-name { font-size: 1.35rem; }
+  .combo-row { grid-template-columns: 1fr auto; }
+  .combo-row [data-cml] { grid-column: 1; }
+  .combo-row button { grid-row: 1 / span 2; grid-column: 2; }
+  .pick-row { grid-template-columns: 44px 1fr; }
+  .pick-img { width: 44px; height: 44px; }
+  .pick-row .qty, .pick-row > .small { grid-column: 1 / -1; justify-self: end; }
+}

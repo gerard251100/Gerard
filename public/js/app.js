@@ -389,6 +389,7 @@ async function viewHome() {
     ${hero}
     <div class="marquee ${bf ? 'bf-marquee' : ''}" aria-hidden="true"><div class="marquee-track">${marqueeItems}<span class="dot">◇</span>${marqueeItems}<span class="dot">◇</span></div></div>
     ${raffleBanner()}
+    <div id="homeCombos"></div>
     <section class="section bf-deals" id="deals" hidden>
       <div class="section-head">
         <div><div class="eyebrow bf-eyebrow">Black Friday</div><h2>Ofertas imperdibles</h2></div>
@@ -414,8 +415,10 @@ async function viewHome() {
     </section>`;
   if (bf) startCountdown();
   else typeWriter($('#typed'), 'Tu fragancia, tu sello');
-  const { perfumes } = await api('/api/catalog');
+  const { perfumes, combos = [] } = await api('/api/catalog');
   rememberCatalog(perfumes);
+  rememberCombos(combos);
+  $('#homeCombos').innerHTML = combosSection(combos, { eyebrow: bfActive() ? 'Black Friday' : 'Combos', title: 'Combos especiales', id: 'combos' });
   const deals = perfumes.filter((p) => p.discount_pct > 0 && !p.sold_out).sort((a, b) => b.discount_pct - a.discount_pct);
   if (deals.length) {
     $('#deals').hidden = false;
@@ -646,9 +649,11 @@ function productGrid(list, mode, { grouped } = {}) {
 
 async function viewCatalog() {
   app.innerHTML = `${bfStrip('Descuentos especiales en perfumes originales · toca <u>Black Friday</u> para ver solo las ofertas')}<div class="section-head"><div><div class="eyebrow">Colección</div><h2>Catálogo</h2></div></div><div id="catalog"></div>`;
-  const { perfumes } = await api('/api/catalog');
+  const { perfumes, combos = [] } = await api('/api/catalog');
   rememberCatalog(perfumes);
+  rememberCombos(combos);
   const root = $('#catalog');
+  if (combos.length) root.insertAdjacentHTML('beforebegin', combosSection(combos, { eyebrow: 'Ahorra más', title: 'Combos', id: 'catCombos' }));
   if (!perfumes.length) {
     root.innerHTML = '<div class="empty">Aún no hay perfumes en el catálogo.</div>';
     return;
@@ -786,7 +791,7 @@ function requireRole(role) {
 
 
 // Carrito de la tienda.
-function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, onSubmit }) {
+function renderCart(body, { perfumes, combos = [], price, commission, formHtml, emptyHref, onSubmit }) {
   const byId = Object.fromEntries(perfumes.map((p) => [String(p.id), p]));
   const draw = () => {
     // Conserva lo que ya se escribió en el formulario al cambiar cantidades.
@@ -795,20 +800,28 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
     const items = cart.read();
     const decantOf = (key) => { const { id, ml } = parseKey(key); return ml ? (byId[id]?.decants || []).find((d) => d.ml === ml) : null; };
     // Quitar del carrito los perfumes (o decants) que ya no están disponibles.
-    const stale = Object.keys(items).filter((key) => { const { id, ml } = parseKey(key); return !byId[id] || (ml && !decantOf(key)); });
-    if (stale.length) { stale.forEach((key) => delete items[key]); cart.write(items); }
-    const lines = Object.entries(items).map(([key, qty]) => {
+    const stale = Object.keys(items).filter((key) => {
+      if (isComboKey(key)) return !comboCartLine(key, items[key], combos);
+      const { id, ml } = parseKey(key); return !byId[id] || (ml && !decantOf(key));
+    });
+    if (stale.length) {
+      if (stale.some(isComboKey)) toast('Un combo de tu carrito ya no está disponible y se quitó', true);
+      stale.forEach((key) => delete items[key]); cart.write(items);
+    }
+    const comboLinesList = Object.entries(items).filter(([key]) => isComboKey(key)).map(([key, qty]) => comboCartLine(key, qty, combos));
+    const lines = Object.entries(items).filter(([key]) => !isComboKey(key)).map(([key, qty]) => {
       const { id, ml } = parseKey(key);
       const d = decantOf(key);
       return { key, p: byId[id], qty, ml, unit: d ? d.price : price(byId[id]) };
     });
-    const total = lines.reduce((sum, l) => sum + l.unit * l.qty, 0);
-    const savings = lines.reduce((sum, l) => sum + (!l.ml && l.p.list_price > l.unit ? (l.p.list_price - l.unit) * l.qty : 0), 0);
+    const total = [...lines, ...comboLinesList].reduce((sum, l) => sum + l.unit * l.qty, 0);
+    const savings = lines.reduce((sum, l) => sum + (!l.ml && l.p.list_price > l.unit ? (l.p.list_price - l.unit) * l.qty : 0), 0)
+      + comboLinesList.reduce((sum, l) => sum + l.savings, 0);
     const totalCommission = commission ? lines.reduce((sum, l) => sum + commission(l.p) * l.qty, 0) : 0;
     const tab = state.user?.role === 'vendor' && $$('.tab')[1];
     if (tab) tab.textContent = `Carrito${cart.count() ? ` (${cart.count()})` : ''}`;
 
-    if (!lines.length) {
+    if (!lines.length && !comboLinesList.length) {
       body.innerHTML = `<div class="empty">Tu carrito está vacío.<br><br><a class="btn sm" href="${emptyHref}">Ver el catálogo</a></div>`;
       return;
     }
@@ -822,6 +835,21 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
                 <div class="product-brand">${esc(p.brand || '')}</div>
                 <div style="font-family:var(--serif);font-size:1.2rem">${esc(p.name)} ${ml ? `<span class="decant-tag">Decant ${fmtMl(ml)} ml</span>` : p.size_ml ? `<span class="muted small">${p.size_ml} ml</span>` : ''}</div>
                 <div class="small muted">${money(unit)} c/u${!ml && p.discount_pct > 0 && p.list_price > unit ? ` <s>${money(p.list_price)}</s> <span class="bf-mini">Oferta</span>` : ''}${commission ? ` · comisión ${money(commission(p))} c/u` : ''}</div>
+              </div>
+              <div class="qty">
+                <button type="button" data-step="-1" aria-label="Menos">−</button>
+                <input type="number" min="1" max="999" value="${qty}" aria-label="Cantidad">
+                <button type="button" data-step="1" aria-label="Más">+</button>
+              </div>
+              <button class="btn sm ghost danger" data-remove aria-label="Quitar">×</button>
+            </div>`).join('')}
+          ${comboLinesList.map(({ key, combo, qty, opts }) => `
+            <div class="cart-line combo-line" data-id="${key}">
+              <div>
+                <div class="product-brand"><span class="combo-badge inline">Combo</span></div>
+                <div style="font-family:var(--serif);font-size:1.2rem">${esc(combo.name)}</div>
+                <div class="small combo-choice">${opts.map((o) => `${esc(o.brand || '')} ${esc(optionLabel(o))}`).join(' + ')}</div>
+                <div class="small muted">${money(combo.price)} c/u${combo.regular ? ` <s>${money(combo.regular)}</s>` : ''}</div>
               </div>
               <div class="qty">
                 <button type="button" data-step="-1" aria-label="Menos">−</button>
@@ -848,6 +876,8 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
 
     // Al subir la cantidad se confirma que haya existencias.
     const setQty = async (key, next) => {
+      // Los combos se revisan al hacer el pedido (el servidor confirma que haya existencias).
+      if (isComboKey(key)) { cart.set(key, next); draw(); return; }
       const { id, ml } = parseKey(key);
       if (next > (cart.read()[key] || 0) && !(await hasStock(id, next, ml))) { draw(); return; }
       const id_ = key; // la línea del carrito se guarda con su clave (sellado o decant)
@@ -871,7 +901,10 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
       e.preventDefault();
       const payload = {
         ...formData(e.target),
-        items: lines.map(({ p, qty, ml }) => ({ perfume_id: p.id, quantity: qty, decant_ml: ml })),
+        items: [
+          ...lines.map(({ p, qty, ml }) => ({ perfume_id: p.id, quantity: qty, decant_ml: ml })),
+          ...comboLinesList.map(({ combo, qty, choices }) => ({ combo_id: combo.id, quantity: qty, choices })),
+        ],
       };
       withBusy(e.submitter, () => onSubmit(payload));
     });
@@ -886,9 +919,11 @@ function renderCart(body, { perfumes, price, commission, formHtml, emptyHref, on
 async function viewShopCart() {
   if (state.user?.role === 'vendor') { location.hash = '#/panel/carrito'; return; }
   app.innerHTML = `${bfStrip('Tus descuentos ya están aplicados en el carrito')}<div class="section-head"><div><div class="eyebrow">Tu compra</div><h2>Carrito</h2></div></div><div id="cartBody"></div>`;
-  const { perfumes } = await api('/api/catalog');
+  const { perfumes, combos = [] } = await api('/api/catalog');
+  rememberCombos(combos);
   renderCart($('#cartBody'), {
     perfumes,
+    combos,
     price: (p) => p.price,
     emptyHref: '#/catalogo',
     formHtml: `
@@ -1207,6 +1242,7 @@ async function renderAdmin(tab) {
     ['resumen', 'Resumen'],
     ['visitas', 'Visitas'],
     ['catalogo', 'Catálogo'],
+    ['combos', 'Combos'],
     ['stock', 'Stock'],
     ['sorteo', 'Sorteo'],
     ['pedidos', `Pedidos${summary.openOrders ? ` (${summary.openOrders})` : ''}`],
@@ -1218,7 +1254,7 @@ async function renderAdmin(tab) {
     <div id="tabBody"></div>`;
   $$('[data-tab]').forEach((b) => b.addEventListener('click', () => viewAdmin(b.dataset.tab)));
   const body = $('#tabBody');
-  const views = { resumen: adminSummary, visitas: adminVisits, catalogo: adminPerfumes, stock: adminStock, sorteo: adminRaffle, pedidos: adminOrders, cuenta: adminAccount };
+  const views = { resumen: adminSummary, visitas: adminVisits, catalogo: adminPerfumes, combos: adminCombos, stock: adminStock, sorteo: adminRaffle, pedidos: adminOrders, cuenta: adminAccount };
   await (views[tab] || views.resumen)(body, summary);
 }
 
@@ -2976,6 +3012,324 @@ async function adminVisits(body, _s, range = { key: 'today' }) {
   $('#lkOther', body).addEventListener('input', makeLink);
   $('#lkCopy', body).addEventListener('click', () => copyText($('#lkUrl', body).textContent));
   makeLink();
+}
+
+/* =================================================================
+   Combos: varios perfumes (sellados o decants) por un precio especial
+   ================================================================= */
+// Clave del carrito de un combo: "combo:3:12-0.14-5" (combo 3 con el perfume 12 sellado y el 14 en decant de 5 ml).
+const isComboKey = (key) => String(key).startsWith('combo:');
+function comboKey(id, choices) {
+  const sig = choices.map((c) => `${c.perfume_id}-${c.ml || 0}`).sort().join('.');
+  return `combo:${id}:${sig}`;
+}
+function parseComboKey(key) {
+  const [, id, sig = ''] = String(key).split(':');
+  return {
+    id: Number(id),
+    choices: sig.split('.').filter(Boolean).map((x) => { const [pid, ml] = x.split('-'); return { perfume_id: Number(pid), ml: Number(ml) || null }; }),
+  };
+}
+const combosById = {};
+function rememberCombos(combos = []) { combos.forEach((c) => { combosById[c.id] = c; }); }
+const optionLabel = (o) => `${o.name}${o.ml ? ` · Decant ${fmtMl(o.ml)} ml` : o.size_ml ? ` ${o.size_ml} ml` : ''}`;
+const sameOption = (a, b) => Number(a.perfume_id) === Number(b.perfume_id) && (a.ml || null) === (b.ml || null);
+
+function comboVisual(c) {
+  if (c.image) return `<img src="${esc(c.image)}" alt="${esc(c.name)}" loading="lazy">`;
+  const pics = c.options.filter((o) => o.image).slice(0, 4);
+  if (!pics.length) return '<img class="placeholder-emblem" src="/img/emblem.png" alt="">';
+  return `<div class="combo-mosaic n${pics.length}">${pics.map((o) => `<img src="${esc(o.image)}" alt="" loading="lazy">`).join('')}</div>`;
+}
+
+function comboCard(c) {
+  const shown = c.options.slice(0, 8);
+  const more = c.options.length - shown.length;
+  return `
+    <article class="combo-card ${c.available ? '' : 'sold-out'}" data-combo="${c.id}">
+      <div class="combo-visual">${comboVisual(c)}<span class="combo-badge">Combo</span>${c.available ? '' : '<span class="stock-badge out">Agotado</span>'}</div>
+      <div class="combo-body">
+        <div class="combo-kind">${c.fixed ? `Incluye ${c.pick} perfumes` : `${c.pick} a elección`}</div>
+        <h3 class="combo-name">${esc(c.name)}</h3>
+        ${c.description ? `<p class="combo-desc">${esc(c.description)}</p>` : ''}
+        <ul class="combo-opts">${shown.map((o) => `<li class="${o.available ? '' : 'off'}"><span>${esc(o.brand || '')}</span> ${esc(optionLabel(o))}</li>`).join('')}${more > 0 ? `<li class="muted">y ${more} más</li>` : ''}</ul>
+        <div class="combo-foot">
+          <div class="product-price ${c.regular ? 'has-deal' : ''}">${c.regular ? `<s class="old-price">${money(c.regular)}</s><span class="deal-price">${money(c.price)}</span>` : money(c.price)}</div>
+          ${c.available
+            ? `<button type="button" class="btn sm solid" data-combo-add="${c.id}">${c.fixed ? 'Al carrito' : `Elegir mis ${c.pick}`}</button>`
+            : '<button class="btn sm" disabled>Agotado</button>'}
+        </div>
+      </div>
+    </article>`;
+}
+
+function combosSection(combos, { eyebrow = 'Combos', title = 'Combos especiales', id = 'combos' } = {}) {
+  if (!combos?.length) return '';
+  return `
+    <section class="section combos-section" id="${id}">
+      <div class="section-head"><div><div class="eyebrow ${bfActive() ? 'bf-eyebrow' : ''}">${eyebrow}</div><h2>${title}</h2></div></div>
+      <div class="combo-grid">${combos.map(comboCard).join('')}</div>
+    </section>`;
+}
+
+function addComboToCart(c, choices) {
+  cart.add(comboKey(c.id, choices), 1);
+  track('cart');
+  const icon = $('[data-cart-icon]');
+  if (icon) { icon.classList.remove('bump'); void icon.offsetWidth; icon.classList.add('bump'); }
+  toast(`Combo ${c.name} agregado al carrito`);
+}
+
+// Ventana para que el cliente elija los perfumes de su combo.
+function comboPicker(c) {
+  const counts = c.options.map(() => 0);
+  const cap = c.allow_repeat ? c.pick : 1;
+  const root = openModal(`
+    <div class="eyebrow">Arma tu combo</div>
+    <h3>${esc(c.name)}</h3>
+    <p class="muted small" style="margin-top:0">Elige ${c.pick} ${c.pick === 1 ? 'perfume' : 'perfumes'}${c.allow_repeat ? ' (puedes repetir)' : ''} · total ${money(c.price)}</p>
+    <div class="pick-list">
+      ${c.options.map((o, i) => `
+        <div class="pick-row ${o.available ? '' : 'off'}" data-i="${i}">
+          <div class="pick-img">${o.image ? `<img src="${esc(o.image)}" alt="">` : ''}</div>
+          <div class="pick-info"><div class="product-brand">${esc(o.brand || '')}</div><div class="pick-name">${esc(optionLabel(o))}</div></div>
+          ${o.available ? `<div class="qty"><button type="button" data-pick="-1" aria-label="Quitar">−</button><input type="number" value="0" readonly aria-label="Cantidad"><button type="button" data-pick="1" aria-label="Agregar">+</button></div>`
+            : '<span class="small muted">Agotado</span>'}
+        </div>`).join('')}
+    </div>
+    <div class="pick-foot">
+      <span id="pickCount" class="muted"></span>
+      <button class="btn solid" id="pickAdd" disabled>Agregar al carrito</button>
+    </div>`);
+  const total = () => counts.reduce((a, b) => a + b, 0);
+  const sync = () => {
+    $$('.pick-row', root).forEach((row) => {
+      const input = $('input', row);
+      if (input) input.value = counts[row.dataset.i];
+      row.classList.toggle('picked', counts[row.dataset.i] > 0);
+    });
+    const n = total();
+    $('#pickCount', root).textContent = n === c.pick ? '¡Listo!' : `Elegiste ${n} de ${c.pick}`;
+    $('#pickAdd', root).disabled = n !== c.pick;
+  };
+  $$('[data-pick]', root).forEach((b) => b.addEventListener('click', () => {
+    const i = Number(b.closest('.pick-row').dataset.i);
+    const step = Number(b.dataset.pick);
+    if (step > 0 && (total() >= c.pick || counts[i] >= cap)) {
+      if (total() >= c.pick) toast(`Ya elegiste ${c.pick}. Quita uno para cambiarlo.`);
+      return;
+    }
+    counts[i] = Math.max(0, counts[i] + step);
+    sync();
+  }));
+  $('#pickAdd', root).addEventListener('click', () => {
+    const choices = c.options.flatMap((o, i) => Array(counts[i]).fill({ perfume_id: o.perfume_id, ml: o.ml }));
+    addComboToCart(c, choices);
+    closeModal();
+  });
+  sync();
+}
+
+app.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-combo-add]');
+  if (!btn) return;
+  const c = combosById[btn.dataset.comboAdd];
+  if (!c) return;
+  if (c.fixed) addComboToCart(c, c.options.map((o) => ({ perfume_id: o.perfume_id, ml: o.ml })));
+  else comboPicker(c);
+});
+
+// Línea del carrito de un combo (null si el combo o lo elegido ya no está disponible).
+function comboCartLine(key, qty, combos) {
+  const { id, choices } = parseComboKey(key);
+  const c = combos.find((x) => x.id === id);
+  if (!c || !c.available || choices.length !== c.pick) return null;
+  const opts = choices.map((ch) => c.options.find((o) => sameOption(o, ch)));
+  if (opts.some((o) => !o || !o.available)) return null;
+  return { key, combo: c, qty, unit: c.price, choices, opts, savings: c.regular ? (c.regular - c.price) * qty : 0 };
+}
+
+/* ---- Panel: pestaña Combos ---- */
+async function adminCombos(body) {
+  const [{ combos }, { perfumes }] = await Promise.all([api('/api/admin/combos'), api('/api/admin/perfumes')]);
+  body.innerHTML = `
+    <div class="section-head" style="margin-top:0">
+      <div><h2 style="margin:0">Combos</h2><div class="small muted">Varios perfumes (sellados o decants) por un precio especial. Se muestran en el inicio y en el catálogo.</div></div>
+      <button class="btn solid" id="newCombo">+ Crear combo</button>
+    </div>
+    ${combos.length ? `<div class="combo-admin-list">${combos.map((c) => `
+      <div class="card combo-admin ${c.active ? '' : 'is-off'}">
+        <div class="combo-admin-head">
+          <div>
+            <div class="eyebrow" style="margin:0">${c.fixed ? `Combo fijo · ${c.pick} perfumes` : `${c.pick} a elección${c.allow_repeat ? ' · se puede repetir' : ''}`}</div>
+            <h3 style="margin:0.2rem 0">${esc(c.name)}</h3>
+            <div class="combo-admin-price">${money(c.price)}${c.regular ? ` <span class="small muted">(por separado ${money(c.regular)})</span>` : ''}</div>
+          </div>
+          <div class="combo-admin-status">
+            ${c.active ? '<span class="badge approved">Publicado</span>' : '<span class="badge">Oculto</span>'}
+            ${c.active && !c.available ? '<span class="badge rejected">Sin stock: no se puede pedir</span>' : ''}
+          </div>
+        </div>
+        <ul class="combo-opts">${c.options.map((o) => `<li class="${o.available ? '' : 'off'}"><span>${esc(o.brand || '')}</span> ${esc(optionLabel(o))} <span class="muted small">${o.available ? `· hoy ${money(o.unit)}` : '· agotado'}</span></li>`).join('')}</ul>
+        <div class="btn-row">
+          <button class="btn sm" data-cedit="${c.id}">Editar</button>
+          <button class="btn sm" data-cactive="${c.id}" data-on="${c.active ? 0 : 1}">${c.active ? 'Ocultar' : 'Publicar'}</button>
+          <button class="btn sm ghost danger" data-cdel="${c.id}">Eliminar</button>
+        </div>
+      </div>`).join('')}</div>`
+      : '<div class="empty">Aún no hay combos. Crea el primero, por ejemplo «Dúo Odyssey: 2 a elección».</div>'}`;
+  const reload = () => adminCombos(body);
+  $('#newCombo', body).addEventListener('click', () => comboForm({}, perfumes, reload));
+  $$('[data-cedit]', body).forEach((b) => b.addEventListener('click', () => comboForm(combos.find((c) => c.id === Number(b.dataset.cedit)), perfumes, reload)));
+  $$('[data-cactive]', body).forEach((b) => b.addEventListener('click', () => withBusy(b, async () => {
+    await api(`/api/admin/combos/${b.dataset.cactive}/active`, { method: 'PATCH', body: { active: b.dataset.on === '1' } });
+    toast(b.dataset.on === '1' ? 'Combo publicado' : 'Combo oculto');
+    reload();
+  })));
+  $$('[data-cdel]', body).forEach((b) => b.addEventListener('click', () => {
+    if (!confirm('¿Eliminar este combo? Los pedidos que ya se hicieron con él se conservan.')) return;
+    withBusy(b, async () => {
+      await api(`/api/admin/combos/${b.dataset.cdel}`, { method: 'DELETE' });
+      toast('Combo eliminado');
+      reload();
+    });
+  }));
+}
+
+function comboForm(c, perfumes, done) {
+  const editing = Boolean(c.id);
+  const decantsOf = (p) => { if (!p?.decants_on) return []; try { return JSON.parse(p.decants || '[]'); } catch { return []; } };
+  const byId = Object.fromEntries(perfumes.map((p) => [p.id, p]));
+  const brands = {};
+  perfumes.forEach((p) => (brands[(p.brand || '').trim() || 'Otras marcas'] ||= []).push(p));
+  const perfumeOptions = Object.keys(brands).sort((a, b) => a.localeCompare(b, 'es')).map((b) => `
+    <optgroup label="${esc(b)}">${brands[b].map((p) => `<option value="${p.id}">${esc(p.name)}${p.size_ml ? ` (${p.size_ml} ml)` : ''}${p.active ? '' : ' — oculto'}</option>`).join('')}</optgroup>`).join('');
+  const root = openModal(`
+    <div class="eyebrow">${editing ? 'Editar' : 'Nuevo'} combo</div>
+    <h3>${editing ? esc(c.name) : 'Crear combo'}</h3>
+    <form class="form" id="comboForm">
+      <div class="form-grid">
+        <div class="field full"><label for="cb-name">Nombre *</label><input id="cb-name" name="name" required maxlength="120" value="${esc(c.name || '')}" placeholder="Ej: Dúo Odyssey"></div>
+        <div class="field full"><label for="cb-desc">Descripción</label><input id="cb-desc" name="description" maxlength="500" value="${esc(c.description || '')}" placeholder="Ej: Llévate 2 Odyssey a elección"></div>
+        <div class="field"><label for="cb-price">Precio del combo (Bs) *</label><input id="cb-price" name="price" type="number" min="0" step="0.01" required value="${esc(c.price ?? '')}" placeholder="Ej: 799"></div>
+        <div class="field"><label>Tipo de combo</label>
+          <div class="seg">
+            <label><input type="radio" name="fixed" value="0" ${c.fixed ? '' : 'checked'}> El cliente elige</label>
+            <label><input type="radio" name="fixed" value="1" ${c.fixed ? 'checked' : ''}> Combo fijo</label>
+          </div></div>
+        <div class="field" id="cb-pick-box"><label for="cb-pick">¿Cuántos elige el cliente?</label><input id="cb-pick" name="pick" type="number" min="1" max="10" value="${esc(c.fixed ? 2 : c.pick || 2)}"></div>
+        <div class="field" id="cb-rep-box"><label class="checkbox" style="margin-top:1.6rem"><input type="checkbox" name="allow_repeat" ${c.id && !c.allow_repeat ? '' : 'checked'}> Puede repetir el mismo perfume</label></div>
+        <div class="field full decant-box">
+          <label id="cb-opts-label"></label>
+          <div id="cb-rows" class="combo-rows"></div>
+          <button type="button" class="btn sm" id="cb-add">+ Agregar perfume</button>
+          <div class="small" id="cb-check"></div>
+        </div>
+        <div class="field full"><label for="cb-img">Imagen (opcional)</label>
+          <div class="btn-row"><input id="cb-img" name="image" value="${esc(c.image || '')}" placeholder="Si no subes una, se arma con las fotos de los perfumes" readonly style="flex:1">
+            <label class="btn sm">Subir<input type="file" id="cb-file" accept="image/*" hidden></label>
+            <button type="button" class="btn sm ghost" id="cb-noimg">Quitar</button></div></div>
+        <label class="checkbox full"><input type="checkbox" name="active" ${c.id && !c.active ? '' : 'checked'}> Publicado (se ve en la tienda)</label>
+      </div>
+      <div class="btn-row" style="margin-top:1rem">
+        <button class="btn solid" type="submit">${editing ? 'Guardar cambios' : 'Crear combo'}</button>
+        <button class="btn ghost" type="button" id="cb-cancel">Cancelar</button>
+      </div>
+    </form>`);
+  const form = $('#comboForm', root);
+  const rows = $('#cb-rows', root);
+  const isFixed = () => form.fixed.value === '1';
+  const unitOf = (p, ml) => {
+    if (!p) return null;
+    if (ml) return decantsOf(p).find((d) => Number(d.ml) === Number(ml))?.price ?? null;
+    return p.suggested_price - Math.min(p.suggested_price, Math.max(0, p.discount_bs || 0));
+  };
+  const addRow = (o = {}) => {
+    const row = document.createElement('div');
+    row.className = 'combo-row';
+    row.innerHTML = `
+      <select data-cp aria-label="Perfume"><option value="">Elige un perfume…</option>${perfumeOptions}</select>
+      <select data-cml aria-label="Presentación"></select>
+      <button type="button" class="btn sm ghost danger" aria-label="Quitar">×</button>`;
+    const sp = $('[data-cp]', row);
+    const sm = $('[data-cml]', row);
+    const fillMl = (ml) => {
+      const p = byId[sp.value];
+      sm.innerHTML = `<option value="">Sellado${p?.size_ml ? ` ${p.size_ml} ml` : ''}</option>${decantsOf(p).map((d) => `<option value="${d.ml}">Decant ${fmtMl(d.ml)} ml</option>`).join('')}`;
+      sm.value = ml ? String(ml) : '';
+    };
+    sp.value = o.perfume_id ? String(o.perfume_id) : '';
+    fillMl(o.ml);
+    sp.addEventListener('change', () => { fillMl(null); check(); });
+    sm.addEventListener('change', check);
+    $('button', row).addEventListener('click', () => { row.remove(); check(); });
+    rows.append(row);
+  };
+  const readRows = () => $$('.combo-row', rows)
+    .map((r) => ({ perfume_id: Number($('[data-cp]', r).value), ml: Number($('[data-cml]', r).value) || null }))
+    .filter((o) => o.perfume_id);
+  // Revisión de precios: avisa si por separado sale igual o más barato que el combo.
+  function check() {
+    const fixed = isFixed();
+    $('#cb-pick-box', root).hidden = fixed;
+    $('#cb-rep-box', root).hidden = fixed;
+    $('#cb-opts-label', root).textContent = fixed ? 'Perfumes que trae el combo' : 'Perfumes entre los que puede elegir';
+    const opts = readRows();
+    const price = Number(form.price.value) || 0;
+    const units = opts.map((o) => unitOf(byId[o.perfume_id], o.ml)).filter((u) => u != null);
+    const out = $('#cb-check', root);
+    if (!opts.length || !price) { out.innerHTML = ''; return; }
+    if (fixed) {
+      const sum = units.reduce((a, b) => a + b, 0);
+      out.innerHTML = sum > price
+        ? `<span class="ok-text">Por separado hoy: ${money(sum)} · el cliente ahorra ${money(sum - price)}</span>`
+        : `<span class="bf-red">Ojo: por separado hoy cuesta ${money(sum)}, igual o menos que el combo.</span>`;
+      return;
+    }
+    const pick = Math.max(1, Math.floor(Number(form.pick.value)) || 1);
+    const sorted = [...units].sort((a, b) => a - b);
+    const cheapest = form.allow_repeat.checked ? (sorted[0] ?? 0) * pick : sorted.slice(0, pick).reduce((a, b) => a + b, 0);
+    const priciest = form.allow_repeat.checked ? (sorted[sorted.length - 1] ?? 0) * pick : sorted.slice(-pick).reduce((a, b) => a + b, 0);
+    if (!form.allow_repeat.checked && opts.length < pick) { out.innerHTML = `<span class="bf-red">Agrega al menos ${pick} perfumes para que elija ${pick} sin repetir.</span>`; return; }
+    out.innerHTML = cheapest <= price
+      ? `<span class="bf-red">Ojo: la elección más barata por separado cuesta ${money(cheapest)}, igual o menos que el combo (${money(price)}).</span>`
+      : `<span class="ok-text">Por separado hoy: entre ${money(cheapest)} y ${money(priciest)} · el combo siempre conviene.</span>`;
+  }
+  (c.raw_options?.length ? c.raw_options : [{}, {}]).forEach(addRow);
+  $('#cb-add', root).addEventListener('click', () => { addRow(); check(); });
+  $$('input[name="fixed"]', root).forEach((r) => r.addEventListener('change', check));
+  form.price.addEventListener('input', check);
+  form.pick.addEventListener('input', check);
+  form.allow_repeat.addEventListener('change', check);
+  check();
+  $('#cb-file', root).addEventListener('change', (e) => withBusy(null, async () => {
+    const data = await readImageFile(e.target.files[0]);
+    const { url } = await api('/api/admin/upload', { method: 'POST', body: { data } });
+    form.image.value = url;
+    toast('Imagen subida');
+  }));
+  $('#cb-noimg', root).addEventListener('click', () => { form.image.value = ''; });
+  $('#cb-cancel', root).addEventListener('click', closeModal);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const payload = {
+      name: form.name.value,
+      description: form.description.value,
+      price: form.price.value,
+      fixed: isFixed() ? 1 : 0,
+      pick: form.pick.value,
+      allow_repeat: form.allow_repeat.checked ? 1 : 0,
+      options: readRows(),
+      image: form.image.value,
+      active: form.active.checked ? 1 : 0,
+    };
+    withBusy(e.submitter, async () => {
+      await api(editing ? `/api/admin/combos/${c.id}` : '/api/admin/combos', { method: editing ? 'PUT' : 'POST', body: payload });
+      closeModal();
+      toast(editing ? 'Combo guardado' : 'Combo creado');
+      done();
+    });
+  });
 }
 
 function viewComingSoon() {

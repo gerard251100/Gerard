@@ -267,6 +267,25 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_activity_at ON activity(at);
 `);
+
+// Combos: varios perfumes (sellados o decants) por un precio especial.
+// fixed = 1: el combo trae exactamente sus perfumes. fixed = 0: el cliente elige 'pick' de la lista.
+// options: JSON [{ perfume_id, ml }] (ml = null para el frasco sellado).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS combos (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    description  TEXT,
+    image        TEXT,
+    price        REAL NOT NULL,
+    fixed        INTEGER NOT NULL DEFAULT 0,
+    pick         INTEGER NOT NULL DEFAULT 2,
+    allow_repeat INTEGER NOT NULL DEFAULT 1,
+    options      TEXT NOT NULL DEFAULT '[]',
+    active       INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
 // Disponibilidad: 'auto' (según stock), 'available' (se puede pedir aunque no haya stock, p. ej. por llegar)
 // o 'soldout' (agotado aunque tenga stock).
 if (!db.prepare('PRAGMA table_info(perfumes)').all().some((c) => c.name === 'availability')) {

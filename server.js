@@ -348,6 +348,7 @@ function canSell(p, qty) {
 }
 
 route('GET', '/api/catalog', async () => ({
+  combos: publicCombos(),
   perfumes: db
     .prepare(`SELECT ${PUBLIC_FIELDS}, suggested_price, discount_bs FROM perfumes WHERE active = 1 ORDER BY brand, name`)
     .all()
@@ -520,9 +521,10 @@ function createOrder(b, vendor) {
   if (b.items.length > 50) throw new HttpError(400, 'Demasiados productos en un solo pedido');
 
   const getPerfume = db.prepare('SELECT * FROM perfumes WHERE id = ? AND active = 1');
-  const items = b.items.map((it) => {
+  const items = b.items.flatMap((it) => {
     const qty = Math.floor(Number(it.quantity));
     if (!Number.isFinite(qty) || qty < 1 || qty > 999) throw new HttpError(400, 'Cantidad inválida');
+    if (it.combo_id) return comboLines(it, qty, getPerfume);
     const p = getPerfume.get(Number(it.perfume_id));
     if (!p) throw new HttpError(400, 'Uno de los perfumes ya no está disponible');
     if (it.decant_ml) {
@@ -1992,6 +1994,181 @@ function saveImage(dataUrl) {
 route('POST', '/api/admin/upload', async (ctx) => {
   requireAdmin(ctx);
   return { url: saveImage(ctx.body.data) };
+});
+
+
+/* ---------------------------------------------------------------- combos */
+
+const optKey = (perfumeId, ml) => `${Number(perfumeId)}:${ml ? Number(ml) : 0}`;
+function comboOptions(c) {
+  try {
+    const list = JSON.parse(c.options || '[]');
+    return Array.isArray(list) ? list.map((o) => ({ perfume_id: Number(o.perfume_id), ml: o.ml ? Number(o.ml) : null })) : [];
+  } catch { return []; }
+}
+const comboLabel = (p, ml) => [p.brand, p.name, ml ? `Decant ${ml} ml` : p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · ');
+
+// Precio normal (el de hoy en el catálogo) de una opción, o null si hoy no se puede vender.
+function optionPrice(p, ml, qty = 1) {
+  if (!p || !p.active) return null;
+  if (ml) {
+    const d = decantSizes(p).find((x) => x.ml === ml);
+    return d ? d.price : null;
+  }
+  return canSell(p, qty) ? finalPrice(p) : null;
+}
+
+// Combo tal como lo ve el cliente.
+function publicCombo(c, byId) {
+  const options = comboOptions(c).map((o) => {
+    const p = byId[o.perfume_id];
+    const unit = optionPrice(p, o.ml);
+    return p && {
+      perfume_id: o.perfume_id, ml: o.ml, brand: p.brand, name: p.name, size_ml: p.size_ml, image: p.image,
+      unit, available: unit != null,
+    };
+  }).filter(Boolean);
+  const ok = options.filter((o) => o.available);
+  const available = c.fixed
+    ? options.length > 0 && ok.length === options.length
+    : ok.length >= (c.allow_repeat ? 1 : c.pick);
+  const regular = c.fixed && available ? round2(options.reduce((s, o) => s + o.unit, 0)) : null;
+  return {
+    id: c.id, name: c.name, description: c.description, image: c.image, price: c.price,
+    fixed: Boolean(c.fixed), pick: c.fixed ? options.length : c.pick, allow_repeat: Boolean(c.allow_repeat),
+    options, available,
+    // "Antes" solo en combos fijos y solo si de verdad sale más caro por separado (precio real de hoy).
+    regular: regular && regular > c.price ? regular : null,
+  };
+}
+
+function perfumesById() {
+  return Object.fromEntries(db.prepare('SELECT * FROM perfumes').all().map((p) => [p.id, p]));
+}
+function publicCombos() {
+  const byId = perfumesById();
+  return db.prepare('SELECT * FROM combos WHERE active = 1 ORDER BY id DESC').all()
+    .map((c) => publicCombo(c, byId)).filter((c) => c.options.length);
+}
+
+// Líneas de pedido de un combo: el precio del combo se reparte entre sus perfumes
+// en proporción a su precio normal (así los reportes y las devoluciones cuadran).
+function comboLines(it, qty, getPerfume) {
+  const c = db.prepare('SELECT * FROM combos WHERE id = ? AND active = 1').get(Number(it.combo_id));
+  if (!c) throw new HttpError(400, 'Uno de los combos ya no está disponible');
+  const options = comboOptions(c);
+  const allowed = new Set(options.map((o) => optKey(o.perfume_id, o.ml)));
+  const choices = c.fixed
+    ? options
+    : (Array.isArray(it.choices) ? it.choices : []).map((ch) => ({ perfume_id: Number(ch.perfume_id), ml: ch.ml || ch.decant_ml ? Number(ch.ml || ch.decant_ml) : null }));
+  const pick = c.fixed ? options.length : c.pick;
+  if (choices.length !== pick) throw new HttpError(400, `Elige ${pick} perfumes para el combo ${c.name}`);
+  const keys = choices.map((ch) => optKey(ch.perfume_id, ch.ml));
+  if (keys.some((k) => !allowed.has(k))) throw new HttpError(400, `Uno de los perfumes elegidos no es parte del combo ${c.name}`);
+  if (!c.allow_repeat && new Set(keys).size !== keys.length) throw new HttpError(400, `En el combo ${c.name} no se puede repetir el mismo perfume`);
+
+  const lines = choices.map((ch) => {
+    const p = getPerfume.get(ch.perfume_id);
+    if (!p) throw new HttpError(409, `Uno de los perfumes del combo ${c.name} ya no está disponible`);
+    const sealedSame = choices.filter((x) => x.perfume_id === ch.perfume_id && !x.ml).length;
+    const unit = optionPrice(p, ch.ml, qty * Math.max(1, sealedSame));
+    if (unit == null) throw new HttpError(409, ch.ml ? `El decant de ${p.name} ya no está disponible` : noStock(p.name));
+    const cost = ch.ml
+      ? (p.cost != null && p.size_ml ? round2(p.cost * ch.ml / p.size_ml) : null)
+      : p.cost ?? null;
+    return { p, qty, unit, label: `Combo ${c.name} · ${comboLabel(p, ch.ml)}`, decantMl: ch.ml, cost, commission: 0 };
+  });
+  const sum = lines.reduce((s, l) => s + l.unit, 0);
+  let left = c.price;
+  lines.forEach((l, i) => {
+    l.price = i === lines.length - 1 ? round2(left) : round2(sum > 0 ? c.price * l.unit / sum : c.price / lines.length);
+    left -= l.price;
+  });
+  return lines;
+}
+
+// Datos de un combo que manda el administrador.
+function comboFields(b) {
+  const name = text(b.name, 120);
+  if (!name) throw new HttpError(400, 'Ponle un nombre al combo');
+  const price = money(b.price);
+  if (!(price > 0)) throw new HttpError(400, 'Pon el precio del combo');
+  const fixed = b.fixed === true || b.fixed === 1 || b.fixed === '1';
+  const allowRepeat = !fixed && (b.allow_repeat === true || b.allow_repeat === 1 || b.allow_repeat === '1');
+  const byId = perfumesById();
+  const seen = new Set();
+  const options = [];
+  for (const o of (Array.isArray(b.options) ? b.options : []).slice(0, 40)) {
+    const p = byId[Number(o.perfume_id)];
+    if (!p) continue;
+    const ml = o.ml ? Math.round(Number(o.ml) * 10) / 10 : null;
+    if (ml && !decantSizes(p).some((d) => d.ml === ml)) throw new HttpError(400, `${p.name} no tiene decant de ${ml} ml activo`);
+    const k = optKey(p.id, ml);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    options.push({ perfume_id: p.id, ml });
+  }
+  if (!options.length) throw new HttpError(400, 'Agrega al menos un perfume al combo');
+  let pick = Math.floor(Number(b.pick));
+  if (fixed) {
+    if (options.length < 2) throw new HttpError(400, 'Un combo fijo necesita al menos 2 perfumes');
+    pick = options.length;
+  } else {
+    if (!(pick >= 1 && pick <= 10)) throw new HttpError(400, 'Indica cuántos perfumes elige el cliente (de 1 a 10)');
+    if (!allowRepeat && pick > options.length) throw new HttpError(400, `Para elegir ${pick} sin repetir, la lista necesita al menos ${pick} perfumes`);
+  }
+  const image = typeof b.image === 'string' && /^\/uploads\/[\w.-]+$/.test(b.image) ? b.image : null;
+  const active = b.active === undefined ? 1 : (b.active === true || b.active === 1 || b.active === '1' ? 1 : 0);
+  return [name, text(b.description, 500), image, price, fixed ? 1 : 0, pick, allowRepeat ? 1 : 0, JSON.stringify(options), active];
+}
+
+route('GET', '/api/admin/combos', async (ctx) => {
+  requireAdmin(ctx);
+  const byId = perfumesById();
+  return {
+    combos: db.prepare('SELECT * FROM combos ORDER BY active DESC, id DESC').all().map((c) => ({
+      ...publicCombo(c, byId),
+      active: Boolean(c.active),
+      raw_options: comboOptions(c),
+    })),
+  };
+});
+
+route('POST', '/api/admin/combos', async (ctx) => {
+  requireAdmin(ctx);
+  const f = comboFields(ctx.body);
+  const { lastInsertRowid } = db
+    .prepare('INSERT INTO combos (name, description, image, price, fixed, pick, allow_repeat, options, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(...f);
+  logActivity('Combo creado', `${f[0]} · ${f[3].toFixed(2)} Bs`, f[3]);
+  return { id: lastInsertRowid };
+});
+
+route('PUT', '/api/admin/combos/:id', async (ctx) => {
+  requireAdmin(ctx);
+  const f = comboFields(ctx.body);
+  const { changes } = db
+    .prepare('UPDATE combos SET name = ?, description = ?, image = ?, price = ?, fixed = ?, pick = ?, allow_repeat = ?, options = ?, active = ? WHERE id = ?')
+    .run(...f, Number(ctx.params.id));
+  if (!changes) throw new HttpError(404, 'Combo no encontrado');
+  logActivity('Combo editado', `${f[0]} · ${f[3].toFixed(2)} Bs${f[8] ? '' : ' (oculto)'}`, f[3]);
+  return { ok: true };
+});
+
+route('PATCH', '/api/admin/combos/:id/active', async (ctx) => {
+  requireAdmin(ctx);
+  const { changes } = db.prepare('UPDATE combos SET active = ? WHERE id = ?').run(ctx.body.active ? 1 : 0, Number(ctx.params.id));
+  if (!changes) throw new HttpError(404, 'Combo no encontrado');
+  return { ok: true };
+});
+
+route('DELETE', '/api/admin/combos/:id', async (ctx) => {
+  requireAdmin(ctx);
+  const c = db.prepare('SELECT name FROM combos WHERE id = ?').get(Number(ctx.params.id));
+  if (!c) throw new HttpError(404, 'Combo no encontrado');
+  db.prepare('DELETE FROM combos WHERE id = ?').run(Number(ctx.params.id));
+  logActivity('Combo eliminado', c.name);
+  return { ok: true };
 });
 
 /* ---------------------------------------------------------- static files */
