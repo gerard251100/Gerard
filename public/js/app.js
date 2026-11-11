@@ -475,13 +475,15 @@ function productCard(p, { mode = 'view' } = {}) {
   // Si el sellado está agotado pero hay decants, el perfume sigue disponible en decant.
   const soldOut = sealedOut && !decants.length;
   const startMl = sealedOut && decants.length ? decants[0].ml : '';
+  // Sellado o decant: un menú desplegable (no un cuadro con todos los tamaños).
   const variants = decants.length ? `
-          <div class="variants" role="group" aria-label="Presentación">
-            <button type="button" class="variant ${startMl ? '' : 'active'}" data-variant="" ${sealedOut ? 'disabled' : ''}>
-              <span>Sellado${p.size_ml ? ` ${p.size_ml} ml` : ''}</span><strong>${sealedOut ? 'Agotado' : money(p.price)}</strong></button>
-            ${decants.map((d) => `<button type="button" class="variant ${startMl === d.ml ? 'active' : ''}" data-variant="${d.ml}" data-price="${d.price}">
-              <span>Decant ${fmtMl(d.ml)} ml</span><strong>${money(d.price)}</strong></button>`).join('')}
-          </div>` : '';
+          <label class="variant-pick">
+            <span class="variant-label">Presentación</span>
+            <select data-variant-select aria-label="Elige sellado o decant">
+              <option value="" ${startMl ? '' : 'selected'} ${sealedOut ? 'disabled' : ''}>Sellado${p.size_ml ? ` ${p.size_ml} ml` : ''} · ${sealedOut ? 'Agotado' : moneyShort(p.price)}</option>
+              ${decants.map((d) => `<option value="${d.ml}" data-price="${d.price}" ${startMl === d.ml ? 'selected' : ''}>Decant ${fmtMl(d.ml)} ml · ${moneyShort(d.price)}</option>`).join('')}
+            </select>
+          </label>` : '';
   const addBlock = (label) => soldOut
     ? '<div class="product-actions"><button class="btn sm" disabled>Agotado</button></div>'
     : `
@@ -513,19 +515,20 @@ function productCard(p, { mode = 'view' } = {}) {
 }
 
 // Botones de cantidad y "agregar al carrito" de cualquier tarjeta de perfume.
+// Al cambiar Sellado / Decant en el menú se actualiza el precio de la tarjeta.
+app.addEventListener('change', (e) => {
+  const sel = e.target.closest('[data-variant-select]');
+  if (!sel) return;
+  const card = sel.closest('.product');
+  const opt = sel.selectedOptions[0];
+  card.dataset.ml = sel.value;
+  const p = catalogById[card.dataset.id];
+  $('.price-slot', card).innerHTML = sel.value
+    ? `<div class="product-price">${money(Number(opt.dataset.price))}<small class="decant-tag">Decant ${fmtMl(Number(sel.value))} ml</small></div>`
+    : (p ? priceHtml(p) : '');
+});
+
 app.addEventListener('click', (e) => {
-  const v = e.target.closest('[data-variant]');
-  if (v && !v.disabled) {
-    const card = v.closest('.product');
-    card.dataset.ml = v.dataset.variant;
-    $$('[data-variant]', card).forEach((b) => b.classList.toggle('active', b === v));
-    const slot = $('.price-slot', card);
-    const p = catalogById[card.dataset.id];
-    slot.innerHTML = v.dataset.variant
-      ? `<div class="product-price">${money(Number(v.dataset.price))}<small class="decant-tag">Decant ${fmtMl(Number(v.dataset.variant))} ml</small></div>`
-      : (p ? priceHtml(p) : '');
-    return;
-  }
   const btn = e.target.closest('[data-qty], [data-add]');
   const card = btn && btn.closest('.product');
   if (!card) return;
@@ -563,6 +566,8 @@ function addToCart(btn, card, input, id, qty, ml = null) {
   toast(`${ml ? `Decant ${fmtMl(ml)} ml` : 'Perfume'} agregado al carrito (${qty})`);
 }
 
+// Precio corto para el menú de presentación: "Bs 150" (sin ,00 si es entero).
+const moneyShort = (n) => (Number(n) % 1 ? money(n) : `Bs ${Number(n).toLocaleString('es-BO')}`);
 // 5 -> "5", 2.5 -> "2,5"
 const fmtMl = (n) => String(n).replace('.', ',');
 // Perfumes del catálogo por id (para cambiar el precio al elegir Sellado o Decant).
