@@ -1966,7 +1966,8 @@ function perfumeForm(p = {}) {
     data.decants_on = e.target.decants_on.checked;
     data.decants = $$('.decant-row', e.target)
       .map((r) => ({ ml: $('[data-dml]', r).value, price: $('[data-dprice]', r).value }))
-      .filter((d) => d.ml !== '' || d.price !== '');
+      // Una fila sin precio (por ejemplo la de 10 ml que viene puesta) se ignora en vez de bloquear el guardado.
+      .filter((d) => d.price !== '' && Number(d.price) > 0);
     if (data.decants_on && !data.decants.some((d) => d.ml && d.price)) { toast('Pon al menos un decant con sus ml y su precio', true); return; }
     withBusy(e.submitter, async () => {
       const { perfume } = await api(editing ? `/api/admin/perfumes/${p.id}` : '/api/admin/perfumes', { method: editing ? 'PUT' : 'POST', body: data });

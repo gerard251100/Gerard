@@ -316,7 +316,8 @@ function decantsValue(value) {
   const seen = new Set();
   const out = [];
   for (const d of list.slice(0, 8)) {
-    if ((d?.ml === '' || d?.ml == null) && (d?.price === '' || d?.price == null)) continue;
+    // Filas sin precio se ignoran (el formulario trae filas de 5 y 10 ml ya puestas).
+    if (d?.price === '' || d?.price == null || !(Number(d.price) > 0)) continue;
     const ml = Math.round(Number(d.ml) * 10) / 10;
     const price = money(d.price);
     if (!(ml > 0 && ml <= 200)) throw new HttpError(400, 'Cada decant necesita sus ml (por ejemplo 5 o 10)');
