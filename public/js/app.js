@@ -1893,7 +1893,7 @@ function perfumeForm(p = {}) {
         <div class="field full decant-box">
           <label class="checkbox"><input type="checkbox" name="decants_on" id="p-dec-on" ${p.decants_on ? 'checked' : ''}> 💧 Vender este perfume en decants</label>
           <div class="decant-rows" id="p-dec-rows" ${p.decants_on ? '' : 'hidden'}>
-            <div class="small muted">Presentaciones (ml y precio de cada decant). El frasco sellado se sigue vendiendo con su precio normal.</div>
+            <div class="small muted">Pon el precio de cada tamaño que vendas de este perfume. Deja vacío el precio de los que no vendas. El frasco sellado se sigue vendiendo con su precio normal.</div>
             <div id="p-dec-list"></div>
             <button type="button" class="btn sm" id="p-dec-add">+ Agregar presentación</button>
           </div>
@@ -1925,7 +1925,12 @@ function perfumeForm(p = {}) {
     $('button', row).addEventListener('click', () => row.remove());
     decList.append(row);
   };
-  (decants.length ? decants : [{ ml: 5 }, { ml: 10 }]).forEach(decRow);
+  // Tamaños de decant que vende la tienda: siempre aparecen; los que no tienen precio no se publican.
+  const DECANT_SIZES = [4, 5, 10, 20];
+  const savedMl = new Set(decants.map((d) => Number(d.ml)));
+  [...decants, ...DECANT_SIZES.filter((ml) => !savedMl.has(ml)).map((ml) => ({ ml }))]
+    .sort((a, b) => Number(a.ml) - Number(b.ml))
+    .forEach(decRow);
   $('#p-dec-add', root).addEventListener('click', () => decRow());
   $('#p-dec-on', root).addEventListener('change', (e) => { $('#p-dec-rows', root).hidden = !e.target.checked; });
   // Vista previa del precio con descuento.
