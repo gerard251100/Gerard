@@ -351,7 +351,7 @@ async function viewHome() {
       <div class="bf-hero-content">
         <div class="bf-kicker"><span class="bf-pill">Solo por tiempo limitado</span></div>
         <h1 class="bf-title"><span class="bf-word">BLACK</span><span class="bf-word outline">DISTINTO</span></h1>
-        <div class="bf-sub">Descuentos especiales en perfumes originales · <strong>solo en Distinto SCZ</strong></div>
+        <div class="bf-sub"><strong>El Black Friday de Distinto SCZ</strong> · descuentos especiales en perfumes originales</div>
         ${countdownHTML(bfEnd(), `La oferta termina el ${fmtEnd(bfEnd())}`)}
         <div class="hero-actions">
           <a class="btn solid bf-cta" href="#/catalogo?ofertas">Ver ofertas</a>
