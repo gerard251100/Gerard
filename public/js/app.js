@@ -342,7 +342,7 @@ async function viewHome() {
   const mode = cardMode();
   const bf = bfActive();
   const marqueeItems = (bf
-    ? ['Black Friday', '<span class="script">Tu fragancia, tu sello</span>', 'Perfumes originales', 'Descuentos especiales', 'Paga con QR', 'Santa Cruz']
+    ? ['Black Distinto', '<span class="script">Tu fragancia, tu sello</span>', 'Perfumes originales', 'Descuentos especiales', 'Paga con QR', 'Santa Cruz']
     : ['Distinto SCZ', '<span class="script">Tu fragancia, tu sello</span>', 'Perfumes originales', 'Hombre', 'Mujer', 'Unisex', 'Santa Cruz'])
     .map((t) => (t.startsWith('<') ? t : `<span>${t}</span>`)).join('<span class="dot">◇</span>');
   const hero = bf ? `
@@ -350,8 +350,8 @@ async function viewHome() {
       <div class="bf-glow" aria-hidden="true"></div>
       <div class="bf-hero-content">
         <div class="bf-kicker"><span class="bf-pill">Solo por tiempo limitado</span></div>
-        <h1 class="bf-title"><span class="bf-word">BLACK</span><span class="bf-word outline">FRIDAY</span></h1>
-        <div class="bf-sub">en <strong>Distinto SCZ</strong> · descuentos especiales en perfumes originales</div>
+        <h1 class="bf-title"><span class="bf-word">BLACK</span><span class="bf-word outline">DISTINTO</span></h1>
+        <div class="bf-sub">Descuentos especiales en perfumes originales · <strong>solo en Distinto SCZ</strong></div>
         ${countdownHTML(bfEnd(), `La oferta termina el ${fmtEnd(bfEnd())}`)}
         <div class="hero-actions">
           <a class="btn solid bf-cta" href="#/catalogo?ofertas">Ver ofertas</a>
@@ -361,7 +361,7 @@ async function viewHome() {
       <div class="bf-visual" aria-hidden="true">
         <div class="ring"></div><div class="ring dashed"></div><div class="ring pulse"></div><div class="ring pulse two"></div><div class="orbit"></div>
         <img src="/img/emblem.png" alt="">
-        <div class="bf-stamp"><span>BLACK</span><span>FRIDAY</span></div>
+        <div class="bf-stamp"><span>BLACK</span><span>DISTINTO</span></div>
       </div>
     </section>` : `
     <section class="hero brand-hero">
@@ -392,7 +392,7 @@ async function viewHome() {
     <div id="homeCombos"></div>
     <section class="section bf-deals" id="deals" hidden>
       <div class="section-head">
-        <div><div class="eyebrow bf-eyebrow">Black Friday</div><h2>Ofertas imperdibles</h2></div>
+        <div><div class="eyebrow bf-eyebrow">Black Distinto</div><h2>Ofertas imperdibles</h2></div>
         <a class="btn sm" href="#/catalogo?ofertas">Ver todas</a>
       </div>
       <div id="dealsGrid"></div>
@@ -418,7 +418,7 @@ async function viewHome() {
   const { perfumes, combos = [] } = await api('/api/catalog');
   rememberCatalog(perfumes);
   rememberCombos(combos);
-  $('#homeCombos').innerHTML = combosSection(combos, { eyebrow: bfActive() ? 'Black Friday' : 'Combos', title: 'Combos especiales', id: 'combos' });
+  $('#homeCombos').innerHTML = combosSection(combos, { eyebrow: bfActive() ? 'Black Distinto' : 'Combos', title: 'Combos especiales', id: 'combos' });
   const deals = perfumes.filter((p) => p.discount_pct > 0 && !p.sold_out).sort((a, b) => b.discount_pct - a.discount_pct);
   if (deals.length) {
     $('#deals').hidden = false;
@@ -601,7 +601,7 @@ function catalogFilters(perfumes, onChange) {
       <input type="search" id="q" placeholder="Buscar por nombre o marca…">
       <div class="chips" data-group="cat">
         <button class="chip ${startDeals ? '' : 'active'}" data-val="">Todos</button>
-        ${hasDeals ? `<button class="chip chip-deal ${startDeals ? 'active' : ''}" data-val="__ofertas">${bfActive() ? '🔥 Black Friday' : '🔥 Ofertas'}</button>` : ''}
+        ${hasDeals ? `<button class="chip chip-deal ${startDeals ? 'active' : ''}" data-val="__ofertas">${bfActive() ? '🔥 Black Distinto' : '🔥 Ofertas'}</button>` : ''}
         ${hasDecants ? '<button class="chip chip-decant" data-val="__decants">💧 Decants</button>' : ''}
         ${categories.map((c) => `<button class="chip" data-val="${esc(c)}">${esc(c)}</button>`).join('')}
       </div>
@@ -653,7 +653,7 @@ function productGrid(list, mode, { grouped } = {}) {
 }
 
 async function viewCatalog() {
-  app.innerHTML = `${bfStrip('Descuentos especiales en perfumes originales · toca <u>Black Friday</u> para ver solo las ofertas')}<div class="section-head"><div><div class="eyebrow">Colección</div><h2>Catálogo</h2></div></div><div id="catalog"></div>`;
+  app.innerHTML = `${bfStrip('Descuentos especiales en perfumes originales · toca <u>Black Distinto</u> para ver solo las ofertas')}<div class="section-head"><div><div class="eyebrow">Colección</div><h2>Catálogo</h2></div></div><div id="catalog"></div>`;
   const { perfumes, combos = [] } = await api('/api/catalog');
   rememberCatalog(perfumes);
   rememberCombos(combos);
@@ -865,7 +865,7 @@ function renderCart(body, { perfumes, combos = [], price, commission, formHtml, 
             </div>`).join('')}
           <div style="margin-top:1rem">
             ${commission ? `<div class="cart-total"><span class="muted">Comisión total</span><span style="color:var(--gold)">${money(totalCommission)}</span></div>` : ''}
-            ${savings > 0 ? `<div class="cart-total bf-savings"><span>${bfActive() ? 'Ahorras con Black Friday' : 'Ahorras'}</span><span>−${money(savings)}</span></div>` : ''}
+            ${savings > 0 ? `<div class="cart-total bf-savings"><span>${bfActive() ? 'Ahorras con Black Distinto' : 'Ahorras'}</span><span>−${money(savings)}</span></div>` : ''}
             <div class="cart-total big"><span>Total</span><span>${money(total)}</span></div>
           </div>
         </div>
@@ -996,7 +996,7 @@ async function viewTrack(token) {
   }
 
   app.innerHTML = `
-    ${bfStrip('Gracias por comprar en Black Friday · mira más ofertas')}
+    ${bfStrip('Gracias por comprar en Black Distinto · mira más ofertas')}
     <div class="section-head">
       <div>
         <div class="eyebrow">Pedido #${order.id} · ${fmtDate(order.created_at)}</div>
@@ -1279,11 +1279,11 @@ function adminSummary(body, s) {
     <form class="card bf-card ${settingsCache?.black_friday === '1' ? 'is-on' : ''}" id="bfForm">
       <div>
         <div class="eyebrow" style="margin:0">Campaña</div>
-        <h3 style="margin:0.3rem 0">🖤 Black Friday ${settingsCache?.black_friday === '1' ? (bfActive() ? '· <span class="bf-red">Activo</span>' : '· terminó') : '· apagado'}</h3>
-        <p class="small muted" style="margin:0">Cambia la página al diseño Black Friday con cuenta regresiva y la sección de ofertas. Los descuentos se ponen en cada perfume (Catálogo → Descuento %).</p>
+        <h3 style="margin:0.3rem 0">🖤 Black Distinto ${settingsCache?.black_friday === '1' ? (bfActive() ? '· <span class="bf-red">Activo</span>' : '· terminó') : '· apagado'}</h3>
+        <p class="small muted" style="margin:0">Cambia la página al diseño Black Distinto con cuenta regresiva y la sección de ofertas. Los descuentos se ponen en cada perfume (Catálogo → Descuento %).</p>
       </div>
       <div class="bf-controls">
-        <label class="checkbox"><input type="checkbox" name="black_friday" ${settingsCache?.black_friday === '1' ? 'checked' : ''}> Diseño Black Friday encendido</label>
+        <label class="checkbox"><input type="checkbox" name="black_friday" ${settingsCache?.black_friday === '1' ? 'checked' : ''}> Diseño Black Distinto encendido</label>
         <div class="field" style="margin:0"><label for="bf-end">Termina el</label><input type="datetime-local" id="bf-end" name="black_friday_end" value="${esc(settingsCache?.black_friday_end || '2026-11-30T23:59')}"></div>
         <button class="btn solid" type="submit">Guardar</button>
       </div>
@@ -1316,7 +1316,7 @@ function adminSummary(body, s) {
     withBusy(e.submitter, async () => {
       settingsCache = (await api('/api/admin/settings', { method: 'PUT', body: { black_friday: f.black_friday.checked, black_friday_end: f.black_friday_end.value } })).settings;
       applyBlackFriday();
-      toast(f.black_friday.checked ? 'Black Friday encendido 🖤' : 'Black Friday apagado');
+      toast(f.black_friday.checked ? 'Black Distinto encendido 🖤' : 'Black Distinto apagado');
       viewAdmin('resumen');
     });
   });
@@ -2516,7 +2516,7 @@ function applyBlackFriday() {
   if (!bar) return;
   bar.hidden = !on;
   if (!on) return;
-  const item = '<span>BLACK FRIDAY</span><span class="dot">✦</span><span>Descuentos en perfumes originales</span><span class="dot">✦</span><span>Paga con QR</span><span class="dot">✦</span><span>Envíos a toda Bolivia</span><span class="dot">✦</span>';
+  const item = '<span>BLACK DISTINTO</span><span class="dot">✦</span><span>Descuentos en perfumes originales</span><span class="dot">✦</span><span>Paga con QR</span><span class="dot">✦</span><span>Envíos a toda Bolivia</span><span class="dot">✦</span>';
   bar.innerHTML = `<a href="#/catalogo?ofertas" class="bf-bar-track">${item.repeat(4)}</a>`;
 }
 
@@ -2525,7 +2525,7 @@ function bfStrip(message) {
   if (!bfActive()) return '';
   return `
     <a class="bf-strip" href="#/catalogo?ofertas">
-      <span class="bf-strip-title"><b>BLACK</b> FRIDAY</span>
+      <span class="bf-strip-title"><b>BLACK</b> DISTINTO</span>
       <span class="bf-strip-msg">${message}</span>
       <span class="bf-strip-left">Termina en <strong data-bf-left>${bfLeftText()}</strong></span>
     </a>`;
