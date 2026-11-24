@@ -1,0 +1,114 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Monoton&family=Pacifico&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0;background:#1a0b2e}
+#c{width:1080px;height:1350px;position:relative;overflow:hidden}
+svg{position:absolute;inset:0}
+.t{position:absolute;left:0;right:0;text-align:center;color:#fff}
+#wanted{top:70px;font-family:'Anton',Impact,sans-serif;font-size:150px;letter-spacing:6px;line-height:1;
+  color:#fff;text-shadow:0 0 0 #000,6px 6px 0 #ff2e88,12px 12px 0 #2a0b4a, 0 0 40px rgba(255,46,136,.6)}
+#sub{top:245px;font-family:'Pacifico',cursive;font-size:64px;color:#ffe08a;
+  text-shadow:3px 3px 0 #c2185b,0 0 24px rgba(255,200,80,.7);transform:rotate(-4deg)}
+#name{bottom:150px;font-family:'Anton',Impact,sans-serif;font-size:70px;letter-spacing:10px;
+  color:#fff;text-shadow:4px 4px 0 #ff2e88,0 0 30px rgba(255,46,136,.8)}
+#cta{bottom:80px;font-family:'Anton',Impact,sans-serif;font-size:34px;letter-spacing:6px;color:#ffd1e8;opacity:.95}
+</style></head><body>
+<div id="c">
+<svg id="s" width="1080" height="1350" viewBox="0 0 1080 1350" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#2b0f54"/><stop offset=".35" stop-color="#7b2a9c"/>
+    <stop offset=".62" stop-color="#ff4f8b"/><stop offset=".8" stop-color="#ff9a5a"/><stop offset="1" stop-color="#ffc46b"/>
+  </linearGradient>
+  <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fff3a8"/><stop offset=".5" stop-color="#ffb347"/><stop offset="1" stop-color="#ff3f7f"/>
+  </linearGradient>
+  <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ff7a8a"/><stop offset=".25" stop-color="#8a3aa8"/><stop offset="1" stop-color="#1c0a3a"/>
+  </linearGradient>
+  <linearGradient id="glass" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#c2185b"/><stop offset=".25" stop-color="#ff6fae"/>
+    <stop offset=".5" stop-color="#ff9ccb"/><stop offset=".8" stop-color="#e0407f"/><stop offset="1" stop-color="#8e0e48"/>
+  </linearGradient>
+  <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#8a5a12"/><stop offset=".3" stop-color="#ffe7a0"/>
+    <stop offset=".55" stop-color="#d4a53a"/><stop offset=".8" stop-color="#fff0b8"/><stop offset="1" stop-color="#7a4d0c"/>
+  </linearGradient>
+  <radialGradient id="glow" cx=".5" cy=".5" r=".5">
+    <stop offset="0" stop-color="#ff8cc6" stop-opacity=".75"/><stop offset="1" stop-color="#ff8cc6" stop-opacity="0"/>
+  </radialGradient>
+  <clipPath id="sunclip"><rect x="0" y="0" width="1080" height="905"/></clipPath>
+</defs>
+<rect width="1080" height="905" fill="url(#sky)"/>
+<g id="clouds" opacity=".55"></g>
+<g clip-path="url(#sunclip)">
+  <circle cx="540" cy="860" r="260" fill="url(#sun)"/>
+  <g id="sunstripes"></g>
+</g>
+<g id="skyline"></g>
+<rect y="905" width="1080" height="445" fill="url(#sea)"/>
+<g id="reflect"></g>
+<g id="palms"></g>
+<!-- bottle -->
+<g transform="translate(540,-60) scale(1.05)">
+  <ellipse cx="0" cy="860" rx="330" ry="330" fill="url(#glow)"/>
+  <ellipse cx="0" cy="1135" rx="190" ry="26" fill="#000" opacity=".35"/>
+  <!-- body -->
+  <path d="M-150,640 Q-150,610 -120,610 L120,610 Q150,610 150,640 L165,1080 Q165,1125 120,1125 L-120,1125 Q-165,1125 -165,1080 Z" fill="url(#glass)" stroke="#5c0730" stroke-width="5"/>
+  <path d="M-118,640 L-128,1090" stroke="#fff" stroke-width="14" stroke-linecap="round" opacity=".45"/>
+  <path d="M-92,650 L-98,900" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".35"/>
+  <!-- neck + cap -->
+  <rect x="-55" y="560" width="110" height="55" fill="url(#gold)" stroke="#5a3a08" stroke-width="4"/>
+  <path d="M-95,420 Q-95,395 -70,395 L70,395 Q95,395 95,420 L95,565 L-95,565 Z" fill="url(#gold)" stroke="#5a3a08" stroke-width="5"/>
+  <rect x="-95" y="470" width="190" height="10" fill="#7a4d0c" opacity=".5"/>
+  <!-- label -->
+  <rect x="-110" y="800" width="220" height="150" rx="10" fill="#fff4f8" opacity=".92" stroke="url(#gold)" stroke-width="6"/>
+  <text x="0" y="862" text-anchor="middle" font-family="Anton,Impact,sans-serif" font-size="50" letter-spacing="6" fill="#8e0e48">HAWAS</text>
+  <text x="0" y="920" text-anchor="middle" font-family="Pacifico,cursive" font-size="42" fill="#d4387a">Diva</text>
+</g>
+<!-- sunglasses on bottom-left -->
+<g transform="translate(150,1180) rotate(-12)">
+  <path d="M-110,-10 Q-110,40 -60,40 Q-15,40 -10,0 L10,0 Q15,40 60,40 Q110,40 110,-10 Z" fill="#ff2e88" stroke="#2a0b4a" stroke-width="6"/>
+  <path d="M-98,-4 Q-98,30 -60,30 Q-24,30 -20,-2 Z" fill="#3b1a6b"/>
+  <path d="M98,-4 Q98,30 60,30 Q24,30 20,-2 Z" fill="#3b1a6b"/>
+  <path d="M-80,4 L-50,4" stroke="#ff9ccb" stroke-width="5" opacity=".7"/>
+</g>
+</svg>
+</div>
+<script>
+const NS='http://www.w3.org/2000/svg';
+function el(t,a,p){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);p.appendChild(e);return e}
+// sun stripes
+const ss=document.getElementById('sunstripes');
+for(let i=0;i<7;i++){const y=740+i*24, h=4+i*2.2; el('rect',{x:240,y:y,width:600,height:h,fill:'#ff5c8f'},ss)}
+// clouds
+const cl=document.getElementById('clouds');
+[[120,180,260],[700,140,320],[380,300,220],[860,360,200],[60,420,180]].forEach(([x,y,w])=>{
+  el('rect',{x,y,width:w,height:14,rx:7,fill:'#ff8fb5'},cl);
+  el('rect',{x:x+40,y:y+22,width:w*.7,height:10,rx:5,fill:'#ffb0a0'},cl);
+});
+// skyline
+const sk=document.getElementById('skyline');
+let x=0; const rnd=(a)=>{let s=a;return()=>{s=(s*9301+49297)%233280;return s/233280}}; const r=rnd(7);
+while(x<1080){const w=40+r()*60, h=60+r()*(Math.abs(x-540)<250?110:190);
+  el('rect',{x,y:905-h,width:w,height:h,fill:'#3a1560'},sk);
+  for(let wy=905-h+12; wy<895; wy+=18) for(let wx=x+8; wx<x+w-8; wx+=14) if(r()>.6) el('rect',{x:wx,y:wy,width:5,height:7,fill:'#ffcf7a',opacity:.8},sk);
+  x+=w+2+r()*6;}
+// reflections
+const rf=document.getElementById('reflect');
+for(let i=0;i<14;i++){const y=920+i*20, w=300-i*14; el('rect',{x:540-w/2+(i%2?12:-12),y,width:w,height:5,rx:2,fill:'#ffd28a',opacity:.75-i*.045},rf)}
+for(let i=0;i<10;i++){el('rect',{x:60+r()*960,y:960+r()*300,width:40+r()*90,height:3,fill:'#ff9ccb',opacity:.35},rf)}
+// palms
+const pg=document.getElementById('palms');
+function palm(bx,by,h,lean,s){
+  const g=el('g',{},pg); const tx=bx+lean, ty=by-h;
+  el('path',{d:`M${bx-14*s},${by} Q${bx+lean*.2},${by-h*.5} ${tx-5*s},${ty} L${tx+7*s},${ty} Q${bx+lean*.2+16*s},${by-h*.5} ${bx+14*s},${by} Z`,fill:'#1d0838'},g);
+  for(let i=0;i<13;i++){const a=(-180+i*15)*Math.PI/180, L=(170+((i*37)%60))*s;
+    const ex=tx+Math.cos(a)*L, ey=ty+Math.sin(a)*L*.6+L*.35;
+    const cx=tx+Math.cos(a)*L*.5, cy=ty-40*s;
+    el('path',{d:`M${tx},${ty} Q${cx},${cy} ${ex},${ey} Q${cx},${cy+22*s} ${tx},${ty+8*s} Z`,fill:'#1d0838'},g);}
+}
+palm(70,1000,560,60,1.1); palm(-10,1000,420,90,.9); palm(1010,1000,600,-70,1.15); palm(1100,1000,430,-80,.9);
+</script>
+</body></html>
