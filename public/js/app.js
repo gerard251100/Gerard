@@ -1490,7 +1490,7 @@ function stockControl(p) {
 
 /* ---- Stock: inventario con precio de compra y reportes en Excel ---- */
 async function adminStock(body) {
-  const { perfumes, sales, purchases } = await api('/api/admin/inventory');
+  const { perfumes, sales, purchases, writeoffs = [] } = await api('/api/admin/inventory');
   const today = new Date();
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const monthStart = iso(new Date(today.getFullYear(), today.getMonth(), 1));
@@ -1549,6 +1549,11 @@ async function adminStock(body) {
         button: 'Ingresar compra', perfumes, today: iso(today),
         history: purchases, historyTitle: 'Últimas compras', priceKey: 'unit_cost', delAttr: 'data-del-buy',
       })}
+    </div>
+
+    <div class="ops-grid">
+      ${writeoffCard(perfumes, writeoffs, iso(today))}
+      ${proformaCard(perfumes)}
     </div>
 
     <div class="card sales-history" id="salesHistory">
@@ -1638,6 +1643,8 @@ async function adminStock(body) {
   bindOpForm($('#buyForm', body), {
     defaultPrice: (p) => p.cost ?? '', url: '/api/admin/purchases', priceKey: 'unit_cost', done: 'Compra ingresada al stock', reload: () => adminStock(body),
   }, byId);
+  bindWriteoff(body, byId, () => adminStock(body));
+  bindProforma(body, byId);
   const delOp = (attr, url, question, done) => $$(`[${attr}]`, body).forEach((b) => b.addEventListener('click', () => {
     if (!confirm(question)) return;
     withBusy(b, async () => {
@@ -3442,6 +3449,215 @@ if (ADMIN_APP) {
     e.preventDefault();
     appMoreMenu();
   });
+}
+
+
+/* ---- Stock: dar de baja (no es venta) y proforma para WhatsApp ---- */
+const perfumeLabel = (p) => [p.brand, p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · ');
+const pagePrice = (p) => Math.max(0, (p.suggested_price || 0) - Math.max(0, p.discount_bs || 0));
+const perfumeOptions = (perfumes, withStock) => perfumes
+  .map((p) => `<option value="${p.id}">${esc(perfumeLabel(p))}${withStock && p.stock != null ? ` (stock: ${p.stock})` : ''}</option>`).join('');
+
+// Filas de perfumes reutilizables (perfume + cantidad [+ precio]).
+function lineRows(form, { tpl, onChange = () => {} }) {
+  const box = $('[data-lines]', form);
+  const add = () => {
+    box.insertAdjacentHTML('beforeend', tpl);
+    const line = box.lastElementChild;
+    $$('select, input', line).forEach((el) => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => onChange(line, el)));
+    $('[data-remove-line]', line).addEventListener('click', () => { line.remove(); sync(); onChange(); });
+    sync();
+    return line;
+  };
+  const sync = () => $$('[data-remove-line]', box).forEach((b) => { b.disabled = $$('.op-line', box).length === 1; });
+  $('[data-add-line]', form).addEventListener('click', () => { add(); onChange(); });
+  add();
+  return { lines: () => $$('.op-line', box), add, clear: () => { box.innerHTML = ''; add(); } };
+}
+
+function writeoffCard(perfumes, history, today) {
+  if (!perfumes.length) return '';
+  return `
+    <div class="card op-card op-baja">
+      <div>
+        <div class="eyebrow" style="margin:0">No es una venta</div>
+        <h3 style="margin:0.3rem 0">Dar de baja del stock</h3>
+        <p class="small muted" style="margin:0">Para los frascos que abres para <strong>decants</strong> (o probadores, dañados…). Se descuentan del inventario con su costo de compra, pero <strong>no cuentan como venta</strong> ni suman al total vendido.</p>
+      </div>
+      <form class="op-form" id="bajaForm">
+        <div class="op-head small muted baja-head"><span>Perfume</span><span>Cant.</span><span></span></div>
+        <div class="op-lines" data-lines></div>
+        <button type="button" class="btn sm" data-add-line>+ Agregar otro perfume</button>
+        <div class="op-foot">
+          <div class="field"><label>Motivo</label>
+            <select name="reason">
+              <option>Abierto para decants</option><option>Probador</option><option>Dañado o vencido</option><option>Regalo o muestra</option><option>Otro</option>
+            </select></div>
+          <div class="field"><label>Fecha</label><input type="date" name="written_at" value="${today}" required></div>
+          <div class="field"><label>Nota (opcional)</label><input name="note" maxlength="200" placeholder="Ej: frasco para decants de 5 y 10 ml"></div>
+          <button class="btn solid" type="submit">Dar de baja</button>
+        </div>
+      </form>
+      ${history.length ? `
+        <details class="sale-history">
+          <summary class="small">Últimas bajas (${history.length})</summary>
+          <ul class="op-history">
+            ${history.map((h) => `<li>
+              <div><strong>${fmtDay(h.date)}</strong> · <span class="muted">${esc(h.note)}</span>
+                <div class="small muted">${h.lines.map((l) => `${l.quantity} × ${esc(l.perfume_name)}${l.unit_cost != null ? ` · costo ${money(l.unit_cost)} c/u` : ''}`).join('<br>')}</div></div>
+              <div class="op-hist-right"><button type="button" class="btn sm ghost" data-undo-baja="${h.id}">↩ Deshacer</button></div>
+            </li>`).join('')}
+          </ul>
+        </details>` : ''}
+    </div>`;
+}
+
+function bindWriteoff(body, byId, reload) {
+  const form = $('#bajaForm', body);
+  if (!form) return;
+  const options = perfumeOptions(Object.values(byId), true);
+  const rows = lineRows(form, { tpl: `
+    <div class="op-line baja-line">
+      <select data-l="perfume_id" required aria-label="Perfume"><option value="">Elige un perfume…</option>${options}</select>
+      <input data-l="quantity" type="number" min="1" step="1" value="1" required aria-label="Cantidad">
+      <button type="button" class="btn sm ghost danger" data-remove-line aria-label="Quitar">×</button>
+    </div>` });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const items = rows.lines().map((l) => ({ perfume_id: $('[data-l="perfume_id"]', l).value, quantity: $('[data-l="quantity"]', l).value }));
+    const list = items.map((it) => `${it.quantity} × ${perfumeLabel(byId[it.perfume_id] || {})}`).join('\n');
+    if (!confirm(`¿Dar de baja del stock?\n\n${list}\n\nMotivo: ${form.reason.value}\n(No cuenta como venta)`)) return;
+    withBusy(e.submitter, async () => {
+      const res = await api('/api/admin/writeoffs', { method: 'POST', body: { ...formData(form), items } });
+      toast(`Baja registrada${res.cost != null ? ` · costo ${money(res.cost)}` : ''}`);
+      reload();
+    });
+  });
+  $$('[data-undo-baja]', body).forEach((b) => b.addEventListener('click', () => {
+    if (!confirm('¿Deshacer esta baja? Las unidades vuelven al stock.')) return;
+    withBusy(b, async () => {
+      await api(`/api/admin/writeoffs/${b.dataset.undoBaja}`, { method: 'DELETE' });
+      toast('Baja deshecha: las unidades volvieron al stock');
+      reload();
+    });
+  }));
+}
+
+function proformaCard(perfumes) {
+  if (!perfumes.length) return '';
+  return `
+    <div class="card op-card op-proforma">
+      <div>
+        <div class="eyebrow" style="margin:0">Para clientes por cantidad</div>
+        <h3 style="margin:0.3rem 0">Proforma para WhatsApp</h3>
+        <p class="small muted" style="margin:0">Arma el detalle con tu precio especial por unidad, subtotales y total, y envíalo por WhatsApp o cópialo. <strong>No guarda nada ni toca el stock.</strong></p>
+      </div>
+      <form class="op-form" id="proformaForm">
+        <div class="field"><label>Cliente (opcional)</label><input name="client" maxlength="80" placeholder="Ej: Juan Pérez"></div>
+        <div class="op-head small muted"><span>Perfume</span><span>Cant.</span><span>Precio c/u (Bs)</span><span>Subtotal</span><span></span></div>
+        <div class="op-lines" data-lines></div>
+        <button type="button" class="btn sm" data-add-line>+ Agregar otro perfume</button>
+        <div class="op-foot pf-foot">
+          <div class="field"><label>Válida por</label>
+            <select name="days"><option value="3">3 días</option><option value="7" selected>7 días</option><option value="15">15 días</option><option value="30">30 días</option></select></div>
+          <div class="field"><label>Celular del cliente (opcional)</label><input name="phone" type="tel" placeholder="Ej: 70012345"></div>
+          <div class="field full"><label>Nota (opcional)</label><input name="note" maxlength="200" placeholder="Ej: entrega en 48 h · pago por QR o transferencia"></div>
+          <label class="checkbox full"><input type="checkbox" name="show_normal" checked> Mostrar el precio normal y cuánto ahorra</label>
+          <div class="op-total"><span class="muted small">Total</span><strong data-total>${money(0)}</strong></div>
+        </div>
+        <div class="field"><label>Texto para enviar</label><textarea id="pfText" rows="12" readonly></textarea></div>
+        <div class="btn-row">
+          <button type="button" class="btn solid" id="pfWa">Enviar por WhatsApp</button>
+          <button type="button" class="btn" id="pfCopy">Copiar texto</button>
+          <button type="button" class="btn ghost" id="pfClear">Nueva proforma</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+function bindProforma(body, byId) {
+  const form = $('#proformaForm', body);
+  if (!form) return;
+  const options = perfumeOptions(Object.values(byId), true);
+  const num = (n) => (Number(n) % 1 ? Number(n).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : Number(n).toLocaleString('es-BO'));
+  const bs = (n) => `Bs ${num(n)}`;
+  const readLines = () => rows.lines().map((l) => {
+    const p = byId[$('[data-l="perfume_id"]', l).value];
+    const qty = Math.max(0, Math.floor(Number($('[data-l="quantity"]', l).value) || 0));
+    const price = Math.max(0, Number($('[data-l="price"]', l).value) || 0);
+    return p && qty && price ? { p, qty, price, sub: qty * price, normal: pagePrice(p) } : null;
+  });
+  const build = () => {
+    const lines = readLines();
+    rows.lines().forEach((l, i) => { $('[data-sub]', l).textContent = lines[i] ? money(lines[i].sub) : ''; });
+    const ok = lines.filter(Boolean);
+    const total = ok.reduce((n, l) => n + l.sub, 0);
+    const units = ok.reduce((n, l) => n + l.qty, 0);
+    const savings = ok.reduce((n, l) => n + Math.max(0, l.normal - l.price) * l.qty, 0);
+    $('[data-total]', form).textContent = money(total);
+    if (!ok.length) { $('#pfText', form).value = ''; return ''; }
+    const showNormal = form.show_normal.checked;
+    const wa = String(settingsCache?.whatsapp || '59163626511').replace(/^591/, '');
+    const out = [
+      '*PROFORMA · DISTINTO SCZ*',
+      form.client.value.trim() ? `Cliente: ${form.client.value.trim()}` : null,
+      `Fecha: ${new Date().toLocaleDateString('es-BO')}`,
+      '',
+      ...ok.flatMap((l, i) => [
+        `${i + 1}) *${[l.p.brand, l.p.name, l.p.size_ml ? `${l.p.size_ml} ml` : ''].filter(Boolean).join(' ')}*`,
+        `   ${l.qty} × ${bs(l.price)} = *${bs(l.sub)}*`,
+        showNormal && l.normal > l.price ? `   _Precio normal: ${bs(l.normal)} c/u_` : null,
+        '',
+      ]),
+      '──────────────',
+      `Cantidad: ${units} ${units === 1 ? 'perfume' : 'perfumes'}`,
+      `*TOTAL: ${bs(total)}*`,
+      showNormal && savings > 0 ? `Ahorras ${bs(savings)} frente al precio normal` : null,
+      '',
+      form.note.value.trim() || null,
+      `Precios válidos por ${form.days.value} días, sujetos a disponibilidad de stock.`,
+      '',
+      'Distinto SCZ · Perfumes originales',
+      `📲 WhatsApp ${wa} · www.distintoscz.shop`,
+    ].filter((x) => x !== null);
+    const textOut = out.join('\n').replace(/\n{3,}/g, '\n\n');
+    $('#pfText', form).value = textOut;
+    return textOut;
+  };
+  const rows = lineRows(form, {
+    tpl: `
+    <div class="op-line">
+      <select data-l="perfume_id" aria-label="Perfume"><option value="">Elige un perfume…</option>${options}</select>
+      <input data-l="quantity" type="number" min="1" step="1" value="1" aria-label="Cantidad">
+      <input data-l="price" type="number" min="0" step="0.01" aria-label="Precio c/u" placeholder="Precio c/u">
+      <span class="op-sub muted small" data-sub></span>
+      <button type="button" class="btn sm ghost danger" data-remove-line aria-label="Quitar">×</button>
+    </div>`,
+    onChange: (line, el) => {
+      // Al elegir el perfume se pone su precio de la página; luego lo cambias por tu precio especial.
+      if (el?.dataset.l === 'perfume_id') {
+        const p = byId[el.value];
+        $('[data-l="price"]', line).value = p ? pagePrice(p) : '';
+      }
+      build();
+    },
+  });
+  $$('input:not([data-l]), select:not([data-l])', form).forEach((el) => el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input', build));
+  const need = () => { const t = build(); if (!t) toast('Elige al menos un perfume con su cantidad y precio', true); return t; };
+  $('#pfWa', form).addEventListener('click', () => {
+    const t = need();
+    if (!t) return;
+    const url = form.phone.value.trim() ? waLink(form.phone.value.trim(), t) : `https://wa.me/?text=${encodeURIComponent(t)}`;
+    if (window.DistintoApp?.openExternal) window.DistintoApp.openExternal(url);
+    else window.open(url, '_blank', 'noopener');
+  });
+  $('#pfCopy', form).addEventListener('click', async () => {
+    const t = need();
+    if (!t) return;
+    try { await navigator.clipboard.writeText(t); toast('Proforma copiada: pégala en WhatsApp'); }
+    catch { const ta = $('#pfText', form); ta.removeAttribute('readonly'); ta.select(); document.execCommand('copy'); ta.setAttribute('readonly', ''); toast('Proforma copiada'); }
+  });
+  $('#pfClear', form).addEventListener('click', () => { form.reset(); rows.clear(); build(); });
 }
 
 function viewComingSoon() {

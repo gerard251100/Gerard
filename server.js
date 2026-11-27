@@ -437,6 +437,13 @@ function allocCost(source, sourceId) {
   return Math.round((rows.reduce((n, r) => n + r.qty * r.unit_cost, 0) / qty) * 100) / 100;
 }
 
+// Costo total exacto de lo asignado (sin redondear el promedio por unidad); null si no se conoce.
+function allocTotal(source, sourceId) {
+  const rows = db.prepare('SELECT qty, unit_cost FROM lot_allocations WHERE source = ? AND source_id = ?').all(source, sourceId);
+  if (!rows.length || rows.some((r) => r.unit_cost == null)) return null;
+  return round2(rows.reduce((n, r) => n + r.qty * r.unit_cost, 0));
+}
+
 // Devuelve unidades a sus lotes de origen (todas si qty es null).
 function releaseLots(source, sourceId, qty = null) {
   let left = qty == null ? Infinity : qty;
@@ -1249,7 +1256,7 @@ route('PATCH', '/api/admin/perfumes/:id/bestseller', async (ctx) => {
 route('GET', '/api/admin/inventory', async (ctx) => {
   requireAdmin(ctx);
   const perfumes = db.prepare(
-    `SELECT p.id, p.name, p.brand, p.size_ml, p.active, p.stock, p.cost, p.store_price, p.suggested_price,
+    `SELECT p.id, p.name, p.brand, p.size_ml, p.active, p.stock, p.cost, p.store_price, p.suggested_price, p.discount_bs,
             COALESCE((SELECT SUM(i.quantity) FROM order_items i JOIN orders o ON o.id = i.order_id
                       WHERE i.perfume_id = p.id AND o.status != 'cancelado'), 0) AS sold_web,
             COALESCE((SELECT SUM(m.quantity) FROM manual_sales m WHERE m.perfume_id = p.id), 0) AS sold_outside,
@@ -1271,7 +1278,8 @@ route('GET', '/api/admin/inventory', async (ctx) => {
   };
   const sales = group(db.prepare('SELECT * FROM manual_sales ORDER BY sold_at DESC, id DESC LIMIT 200').all(), 'sold_at');
   const purchases = group(db.prepare('SELECT * FROM purchases ORDER BY purchased_at DESC, id DESC LIMIT 200').all(), 'purchased_at');
-  return { perfumes, sales, purchases };
+  const writeoffs = group(db.prepare('SELECT *, reason AS note FROM stock_writeoffs ORDER BY written_at DESC, id DESC LIMIT 200').all(), 'written_at');
+  return { perfumes, sales, purchases, writeoffs };
 });
 
 // Solo toca los datos del inventario: el precio del catálogo y las comisiones no cambian.
@@ -1427,6 +1435,70 @@ route('DELETE', '/api/admin/purchases/:id', async (ctx) => {
       db.prepare('DELETE FROM purchases WHERE id = ?').run(r.id);
     }
     logActivity('compra borrada', `Se borró la compra del ${row.purchased_at}: ${linesText(rows, 'unit_cost')}`);
+  });
+  return { ok: true };
+});
+
+// ---- Bajas de stock (no son ventas): frascos abiertos para decants, probadores, dañados…
+const WRITEOFF_REASONS = ['Abierto para decants', 'Probador', 'Dañado o vencido', 'Regalo o muestra', 'Otro'];
+
+route('POST', '/api/admin/writeoffs', async (ctx) => {
+  requireAdmin(ctx);
+  const b = ctx.body;
+  const list = Array.isArray(b.items) ? b.items : [];
+  if (!list.length) throw new HttpError(400, 'Agrega al menos un perfume');
+  if (list.length > 50) throw new HttpError(400, 'Demasiados perfumes en una sola baja');
+  const reason = WRITEOFF_REASONS.includes(b.reason) ? b.reason : 'Abierto para decants';
+  const note = text(b.note, 200);
+  const day = validDay(b.written_at);
+  const getPerfume = db.prepare('SELECT * FROM perfumes WHERE id = ?');
+  const seen = new Set();
+  const lines = list.map((it) => {
+    const p = getPerfume.get(Number(it.perfume_id));
+    if (!p) throw new HttpError(400, 'Elige el perfume en cada fila');
+    if (seen.has(p.id)) throw new HttpError(400, `${p.name} está repetido: súmalo en la cantidad`);
+    seen.add(p.id);
+    const qty = Math.floor(Number(it.quantity));
+    if (!Number.isFinite(qty) || qty < 1 || qty > 999) throw new HttpError(400, `Cantidad inválida para ${p.name}`);
+    if (p.stock != null && p.stock < qty) throw new HttpError(409, `Solo hay ${Math.max(0, p.stock)} de ${p.name} en stock`);
+    return { p, qty, label: [p.name, p.size_ml ? `${p.size_ml} ml` : ''].filter(Boolean).join(' · ') };
+  });
+  const ticket = newToken().slice(0, 12);
+  let cost = 0;
+  let costKnown = true;
+  transaction(() => {
+    const take = db.prepare('UPDATE perfumes SET stock = stock - ? WHERE id = ? AND stock IS NOT NULL');
+    const insert = db.prepare(
+      `INSERT INTO stock_writeoffs (ticket, perfume_id, perfume_name, brand, quantity, reason, written_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    const setCost = db.prepare('UPDATE stock_writeoffs SET unit_cost = ? WHERE id = ?');
+    for (const { p, qty, label } of lines) {
+      take.run(qty, p.id);
+      const { lastInsertRowid } = insert.run(ticket, p.id, label, p.brand || '', qty, note ? `${reason} · ${note}` : reason, day);
+      const unit = consumeLots(p.id, qty, 'baja', Number(lastInsertRowid)); // el costo real sale de sus lotes de compra
+      const lineCost = allocTotal('baja', Number(lastInsertRowid));
+      if (unit != null && lineCost != null) { setCost.run(unit, lastInsertRowid); cost += lineCost; } else costKnown = false;
+    }
+    logActivity('baja de stock', `${reason} (${day}): ${lines.map((l) => `${l.qty} × ${l.label}`).join(', ')}${note ? ` · ${note}` : ''}`, costKnown ? round2(cost) : null);
+  });
+  return { ok: true, ticket, cost: costKnown ? round2(cost) : null };
+});
+
+// Deshacer una baja hecha por error: las unidades vuelven al stock y a sus lotes de compra.
+route('DELETE', '/api/admin/writeoffs/:id', async (ctx) => {
+  requireAdmin(ctx);
+  const row = db.prepare('SELECT * FROM stock_writeoffs WHERE id = ?').get(Number(ctx.params.id));
+  if (!row) throw new HttpError(404, 'Baja no encontrada');
+  const rows = db.prepare('SELECT * FROM stock_writeoffs WHERE ticket = ?').all(row.ticket);
+  transaction(() => {
+    const give = db.prepare('UPDATE perfumes SET stock = stock + ? WHERE id = ? AND stock IS NOT NULL');
+    for (const r of rows) {
+      if (r.perfume_id) give.run(r.quantity, r.perfume_id);
+      releaseLots('baja', r.id);
+      db.prepare('DELETE FROM stock_writeoffs WHERE id = ?').run(r.id);
+    }
+    logActivity('baja deshecha', `Se deshizo la baja del ${row.written_at}: ${rows.map((r) => `${r.quantity} × ${r.perfume_name}`).join(', ')} (volvieron al stock)`);
   });
   return { ok: true };
 });
@@ -1875,6 +1947,9 @@ route('GET', '/api/admin/report', async (ctx) => {
       stockCost, p.stock != null ? round2(Math.max(0, p.stock) * price) : null, p.active ? 'Publicado' : 'Oculto'];
   });
 
+  // Bajas de stock (frascos abiertos para decants, etc.): salen del inventario pero no son ventas.
+  const writeoffRows = db.prepare('SELECT * FROM stock_writeoffs WHERE written_at BETWEEN ? AND ? ORDER BY written_at, id').all(from, to)
+    .map((w) => [fmtDate(w.written_at), w.perfume_name, w.brand || '', w.quantity, w.unit_cost, allocTotal('baja', w.id), w.reason]);
   const period = `Del ${fmtDate(from)} al ${fmtDate(to)}`;
   const { buildXlsx } = require('./src/xlsx');
   const body = buildXlsx([
@@ -1942,6 +2017,17 @@ route('GET', '/api/admin/report', async (ctx) => {
       ],
       rows: buyRows,
       totals: ['TOTAL', '', '', '', bought.units, '', bought.total, ''],
+    },
+    {
+      name: 'Bajas',
+      title: ['Bajas de stock que no son ventas (decants, probadores…)', period],
+      columns: [
+        { header: 'Fecha', width: 13 }, { header: 'Perfume', width: 30 }, { header: 'Marca', width: 14 },
+        { header: 'Cantidad', width: 10, type: 'int' }, { header: 'Costo c/u', width: 13, type: 'money' },
+        { header: 'Costo total', width: 14, type: 'money' }, { header: 'Motivo', width: 40 },
+      ],
+      rows: writeoffRows,
+      totals: ['TOTAL', '', '', writeoffRows.reduce((n, r) => n + r[3], 0), '', round2(writeoffRows.reduce((n, r) => n + (r[5] || 0), 0)), ''],
     },
     {
       name: 'Movimientos',

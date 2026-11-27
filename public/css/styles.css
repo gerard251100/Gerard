@@ -1544,3 +1544,12 @@ body.app-mode .tab-item.active { color: var(--fg); }
 @media (min-width: 721px) {
   body.app-mode .tabbar { max-width: 640px; margin: 0 auto; border: 1px solid var(--line); border-bottom: 0; border-radius: 18px 18px 0 0; }
 }
+
+/* ---- Stock: dar de baja y proforma ---- */
+.op-baja { border-color: rgba(241, 210, 122, 0.45); }
+.op-proforma { border-color: rgba(143, 209, 158, 0.45); }
+.baja-head, .baja-line { grid-template-columns: 1fr 5rem auto !important; }
+.pf-foot { grid-template-columns: 1fr 1fr; align-items: end; }
+.pf-foot .op-total { grid-column: 1 / -1; }
+.pf-foot .field.full, .pf-foot .checkbox.full { grid-column: 1 / -1; }
+#pfText { font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: 0.82rem; line-height: 1.45; white-space: pre; min-height: 14rem; }

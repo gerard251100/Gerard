@@ -268,6 +268,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_activity_at ON activity(at);
 `);
 
+// Bajas de stock que no son ventas (por ejemplo, frascos abiertos para decants).
+// Salen del inventario con el costo de su lote de compra, pero no cuentan como venta.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stock_writeoffs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket       TEXT NOT NULL,
+    perfume_id   INTEGER,
+    perfume_name TEXT NOT NULL,
+    brand        TEXT,
+    quantity     INTEGER NOT NULL,
+    unit_cost    REAL,
+    reason       TEXT NOT NULL,
+    written_at   TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_writeoffs_day ON stock_writeoffs(written_at);
+`);
+
 // Combos: varios perfumes (sellados o decants) por un precio especial.
 // fixed = 1: el combo trae exactamente sus perfumes. fixed = 0: el cliente elige 'pick' de la lista.
 // options: JSON [{ perfume_id, ml }] (ml = null para el frasco sellado).
