@@ -1764,9 +1764,21 @@ async function adminStock(body) {
       const res = await fetch(`/api/admin/report?from=${form.from.value}&to=${form.to.value}`, { credentials: 'same-origin' });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'No se pudo generar el reporte');
       const blob = await res.blob();
+      const fileName = `reporte-distinto-${form.from.value}-a-${form.to.value}.xlsx`;
+      // En la app de Android el archivo se guarda en Descargas del celular.
+      if (window.DistintoApp?.saveFile) {
+        const b64 = await new Promise((ok, fail) => {
+          const r = new FileReader();
+          r.onload = () => ok(String(r.result).split(',')[1]);
+          r.onerror = fail;
+          r.readAsDataURL(blob);
+        });
+        window.DistintoApp.saveFile(fileName, blob.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', b64);
+        return;
+      }
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `reporte-distinto-${form.from.value}-a-${form.to.value}.xlsx`;
+      a.download = fileName;
       document.body.append(a);
       a.click();
       a.remove();

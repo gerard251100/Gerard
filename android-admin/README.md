@@ -1,13 +1,13 @@
 # Distinto Admin (Android)
 
-App de administración de Distinto SCZ. Es una *Trusted Web Activity*: abre
-`https://www.distintoscz.shop/admin-app` a pantalla completa con Chrome, así que
-todo lo que se hace en la app (precios, stock, ventas, compras, pedidos, combos…)
-se guarda en la misma base de datos que la página web.
+App de administración de Distinto SCZ. Es una app WebView propia (`MainActivity.java`)
+que abre `https://www.distintoscz.shop/admin-app`, así que todo lo que se hace en la app
+(precios, stock, ventas, compras, pedidos, combos…) se guarda en la misma base de datos
+que la página web. No depende de Chrome.
 
 - Paquete: `shop.distintoscz.admin`
-- La página publica `/.well-known/assetlinks.json` con la huella de la llave de firma;
-  con eso Android confirma que la app es de la tienda y oculta la barra de direcciones.
+- La página detecta la app con `window.DistintoApp` para guardar el Excel en Descargas.
+- Los enlaces que no son del panel (la tienda, WhatsApp, comprobantes) se abren afuera.
 
 ## Compilar
 
