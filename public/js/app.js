@@ -1869,6 +1869,19 @@ function bindOpForm(form, { defaultPrice, url, priceKey, done, reload }, byId) {
   };
   $('[data-add-line]', form).addEventListener('click', addLine);
   addLine();
+  // Para cargar filas desde otro lugar (por ejemplo, una proforma que el cliente aceptó).
+  form._fill = (items) => {
+    box.innerHTML = '';
+    for (const it of items) {
+      addLine();
+      const line = box.lastElementChild;
+      $('[data-l="perfume_id"]', line).value = String(it.perfume_id);
+      $('[data-l="quantity"]', line).value = it.quantity;
+      $(`[data-l="${priceKey}"]`, line).value = it.price;
+    }
+    if (!items.length) addLine();
+    refresh();
+  };
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const items = $$('.op-line', box).map((line) => Object.fromEntries($$('[data-l]', line).map((el) => [el.dataset.l, el.value])));
@@ -3569,6 +3582,7 @@ function proformaCard(perfumes) {
         <div class="btn-row">
           <button type="button" class="btn solid" id="pfWa">Enviar por WhatsApp</button>
           <button type="button" class="btn" id="pfCopy">Copiar texto</button>
+          <button type="button" class="btn" id="pfSale">✓ Pasar a venta</button>
           <button type="button" class="btn ghost" id="pfClear">Nueva proforma</button>
         </div>
       </form>
@@ -3656,6 +3670,20 @@ function bindProforma(body, byId) {
     if (!t) return;
     try { await navigator.clipboard.writeText(t); toast('Proforma copiada: pégala en WhatsApp'); }
     catch { const ta = $('#pfText', form); ta.removeAttribute('readonly'); ta.select(); document.execCommand('copy'); ta.setAttribute('readonly', ''); toast('Proforma copiada'); }
+  });
+  // El cliente aceptó: se llevan los perfumes y precios al formulario de venta para registrarla.
+  $('#pfSale', form).addEventListener('click', () => {
+    if (!need()) return;
+    const sale = $('#saleForm', body);
+    if (!sale?._fill) return;
+    const ok = readLines().filter(Boolean);
+    sale._fill(ok.map((l) => ({ perfume_id: l.p.id, quantity: l.qty, price: l.price })));
+    if (sale.note) sale.note.value = ['Proforma', form.client.value.trim()].filter(Boolean).join(' · ');
+    sale.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const card = sale.closest('.op-card');
+    card?.classList.add('row-flash');
+    setTimeout(() => card?.classList.remove('row-flash'), 1600);
+    toast('Listo: revisa la venta y toca «Registrar venta»');
   });
   $('#pfClear', form).addEventListener('click', () => { form.reset(); rows.clear(); build(); });
 }
