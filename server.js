@@ -1670,27 +1670,43 @@ route('DELETE', '/api/admin/raffle/codes/:id', async (ctx) => {
   return { ok: true };
 });
 
-// Sortear: elige al azar un ganador por premio entre los códigos registrados (una persona gana una sola vez).
+// Elige al azar un ganador por premio entre los códigos registrados (una persona gana una sola vez).
+// La usan el sorteo real y la prueba, así la prueba es exactamente igual al sorteo del día.
+const personKey = (c) => String(c.phone || '').replace(/\D/g, '') || `code:${c.code}`;
+function pickWinners() {
+  const prizes = rafflePrizes();
+  if (!prizes.length) throw new HttpError(400, 'Pon al menos un premio en la configuración del sorteo');
+  const pool = db.prepare('SELECT * FROM raffle_codes WHERE registered_at IS NOT NULL').all();
+  const people = new Set(pool.map(personKey));
+  if (people.size < prizes.length) throw new HttpError(400, `Se necesitan al menos ${prizes.length} personas registradas (hay ${people.size})`);
+  const used = new Set();
+  const winners = prizes.map((prize, i) => {
+    const options = pool.filter((c) => !used.has(personKey(c)));
+    const pick = options[crypto.randomInt(options.length)]; // cada código registrado es una oportunidad
+    used.add(personKey(pick));
+    return { id: pick.id, rank: i + 1, prize, code: pick.code, name: pick.name, phone: pick.phone, ci: pick.ci,
+      inPlay: options.length };
+  });
+  return { winners, codes: pool.length, people: people.size, pool: pool.map((c) => c.code) };
+}
+
 route('POST', '/api/admin/raffle/draw', async (ctx) => {
   requireAdminPassword(ctx);
   if (db.prepare('SELECT 1 FROM raffle_codes WHERE winner_rank IS NOT NULL').get()) throw new HttpError(400, 'El sorteo ya se realizó');
-  const prizes = rafflePrizes();
-  const pool = db.prepare('SELECT * FROM raffle_codes WHERE registered_at IS NOT NULL').all();
-  const people = new Set(pool.map((c) => String(c.phone).replace(/\D/g, '')));
-  if (people.size < prizes.length) throw new HttpError(400, `Se necesitan al menos ${prizes.length} personas registradas (hay ${people.size})`);
-  const winners = [];
-  const used = new Set();
+  const result = pickWinners();
   transaction(() => {
-    prizes.forEach((prize, i) => {
-      const options = pool.filter((c) => !used.has(String(c.phone).replace(/\D/g, '')));
-      const pick = options[crypto.randomInt(options.length)]; // cada código registrado es una oportunidad
-      used.add(String(pick.phone).replace(/\D/g, ''));
-      db.prepare(`UPDATE raffle_codes SET winner_rank = ?, prize = ?, won_at = datetime('now') WHERE id = ?`).run(i + 1, prize, pick.id);
-      winners.push({ rank: i + 1, prize, code: pick.code, name: pick.name, phone: pick.phone });
-    });
-    logActivity('sorteo', `Sorteo realizado: ${winners.map((w) => `${w.prize} → ${w.name} (${w.code})`).join(' · ')}`);
+    for (const w of result.winners) {
+      db.prepare(`UPDATE raffle_codes SET winner_rank = ?, prize = ?, won_at = datetime('now') WHERE id = ?`).run(w.rank, w.prize, w.id);
+    }
+    logActivity('sorteo', `Sorteo realizado: ${result.winners.map((w) => `${w.prize} → ${w.name} (${w.code})`).join(' · ')}`);
   });
-  return { winners };
+  return result;
+});
+
+// Prueba del sorteo: mismos códigos y misma forma de elegir, pero NO guarda nada ni publica ganadores.
+route('POST', '/api/admin/raffle/test', async (ctx) => {
+  requireAdmin(ctx);
+  return { ...pickWinners(), test: true };
 });
 
 // Deshacer el sorteo (por ejemplo, si se hizo de prueba).

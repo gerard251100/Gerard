@@ -2804,9 +2804,14 @@ async function adminRaffle(body) {
             ${w.phone ? `<a class="btn sm ok" target="_blank" rel="noopener" href="${esc(waLink(w.phone, `¡Hola ${w.name.split(' ')[0]}! Te escribimos de Distinto SCZ: ganaste ${w.prize} en nuestro sorteo con el código ${w.code}. 🎉`))}">WhatsApp</a>` : ''}</li>`).join('')}</ul>`
           : `<p class="small muted" style="margin:0">Elige al azar un ganador por premio entre los códigos registrados. Cada código es una oportunidad y una persona no puede ganar dos premios.</p>`}
       </div>
+      <div class="raffle-actions">
       ${winners.length
-        ? '<button class="btn ghost danger" type="button" id="resetDraw">Anular resultado</button>'
-        : `<button class="btn solid bf-cta" type="button" id="doDraw" ${people < prizes.length ? 'disabled' : ''}>🎲 Sortear ganadores</button>`}
+        ? `<button class="btn" type="button" id="replayDraw">▶ Ver presentación de ganadores</button>
+           <button class="btn ghost danger" type="button" id="resetDraw">Anular resultado</button>`
+        : `<button class="btn" type="button" id="testDraw" ${people < prizes.length ? 'disabled' : ''}>▶ Probar sorteo (no guarda nada)</button>
+           <button class="btn solid bf-cta" type="button" id="doDraw" ${people < prizes.length ? 'disabled' : ''}>🎲 Sortear ganadores</button>
+           ${people < prizes.length ? `<p class="small muted" style="margin:0">Se necesitan al menos ${prizes.length} personas con código registrado (hay ${people}).</p>` : ''}`}
+      </div>
     </div>
 
     <div class="section-head" style="margin-top:1.5rem"><h2>Códigos</h2>
@@ -2883,17 +2888,20 @@ async function adminRaffle(body) {
     message: `Se elegirá al azar 1 ganador por premio (${prizes.join(', ')}) entre ${registered.length} códigos registrados. El resultado se publica en la página.`,
     button: 'Sortear',
     action: async (password) => {
-      const { winners: won } = await api('/api/admin/raffle/draw', { method: 'POST', body: { password } });
-      openModal(`
-        <div class="op-result ok">
-          <div class="paid-check">🏆</div>
-          <h3>¡Tenemos ganadores!</h3>
-          <ul class="order-items">${won.map((w) => `<li><span><strong>${esc(w.prize)}</strong></span><span>${esc(w.name)} · ${esc(w.code)}</span></li>`).join('')}</ul>
-          <button class="btn solid" type="button" id="drawOk">Listo</button>
-        </div>`);
-      $('#drawOk').addEventListener('click', () => { closeModal(); adminRaffle(body); });
+      const result = await api('/api/admin/raffle/draw', { method: 'POST', body: { password } });
+      closeModal();
+      // El resultado ya quedó guardado: la presentación solo lo muestra con la cuenta regresiva.
+      raffleShow(result, { onClose: () => adminRaffle(body) });
     },
   }));
+  $('#testDraw', body)?.addEventListener('click', (e) => withBusy(e.currentTarget, async () => {
+    raffleShow(await api('/api/admin/raffle/test', { method: 'POST' }), { test: true });
+  }));
+  $('#replayDraw', body)?.addEventListener('click', () => {
+    const pool = registered.map((c) => c.code);
+    const saved = winners.map((w) => ({ rank: w.winner_rank, prize: w.prize, code: w.code, name: w.name, phone: w.phone }));
+    raffleShow({ winners: saved, codes: registered.length, people, pool }, { replay: true });
+  });
   $('#resetDraw', body)?.addEventListener('click', () => confirmWithPassword({
     title: 'Anular el resultado del sorteo',
     message: 'Los ganadores dejan de mostrarse y podrás volver a sortear.',
@@ -3686,6 +3694,117 @@ function bindProforma(body, byId) {
     toast('Listo: revisa la venta y toca «Registrar venta»');
   });
   $('#pfClear', form).addEventListener('click', () => { form.reset(); rows.clear(); build(); });
+}
+
+
+/* ---- Presentación del sorteo: cuenta regresiva de 5 segundos y el código ganador ---- */
+function raffleShow(result, { test = false, replay = false, onClose } = {}) {
+  const old = $('#raffleShow');
+  if (old) old.remove();
+  const winners = [...result.winners].sort((a, b) => a.rank - b.rank);
+  const pool = result.pool?.length ? result.pool : winners.map((w) => w.code);
+  const shortName = (n) => { const [a, b] = String(n || '').trim().split(/\s+/); return [a, b ? `${b[0]}.` : ''].filter(Boolean).join(' '); };
+  const stage = document.createElement('div');
+  stage.id = 'raffleShow';
+  stage.className = `raffle-show${test ? ' is-test' : ''}`;
+  stage.innerHTML = `
+    ${test ? '<div class="rs-test">PRUEBA · no se guarda nada ni se publica</div>' : ''}
+    <button type="button" class="rs-close" aria-label="Cerrar">×</button>
+    <div class="rs-inner">
+      <img src="/img/emblem.png" alt="" class="rs-logo">
+      <div class="rs-eyebrow">Gran sorteo · Distinto SCZ</div>
+      <div class="rs-prize" id="rsPrize"></div>
+      <div class="rs-meta" id="rsMeta"></div>
+      <div class="rs-count" id="rsCount"></div>
+      <div class="rs-code" id="rsCode"></div>
+      <div class="rs-name" id="rsName"></div>
+      <div class="rs-actions" id="rsActions"></div>
+    </div>`;
+  document.body.append(stage);
+  document.body.style.overflow = 'hidden';
+  try { stage.requestFullscreen?.().catch(() => {}); } catch { /* sin pantalla completa */ }
+
+  // Sonidos cortos (si el celular no los permite, el sorteo sigue igual).
+  let audio = null;
+  const beep = (freq, dur = 0.12, vol = 0.18) => {
+    try {
+      audio ||= new (window.AudioContext || window.webkitAudioContext)();
+      const o = audio.createOscillator();
+      const g = audio.createGain();
+      o.frequency.value = freq; o.type = 'sine';
+      g.gain.setValueAtTime(vol, audio.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + dur);
+      o.connect(g).connect(audio.destination);
+      o.start(); o.stop(audio.currentTime + dur);
+    } catch { /* sin sonido */ }
+  };
+
+  let timers = [];
+  const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+  const stopAll = () => { timers.forEach(clearTimeout); timers.forEach(clearInterval); timers = []; };
+  const close = () => {
+    stopAll();
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch { /* nada */ }
+    stage.remove();
+    document.body.style.overflow = '';
+    onClose?.();
+  };
+  $('.rs-close', stage).addEventListener('click', close);
+
+  const play = (i) => {
+    stopAll();
+    const w = winners[i];
+    stage.classList.remove('revealed');
+    $('#rsPrize', stage).textContent = `${winners.length > 1 ? `${PLACE[i] || `Premio ${i + 1}`} · ` : ''}${w.prize}`;
+    $('#rsMeta', stage).textContent = `${w.inPlay ?? result.codes} códigos participando`;
+    $('#rsName', stage).textContent = '';
+    $('#rsActions', stage).innerHTML = '';
+    const code = $('#rsCode', stage);
+    const count = $('#rsCount', stage);
+    // Mientras cuenta, pasan los códigos a toda velocidad.
+    const spin = setInterval(() => { code.textContent = pool[Math.floor(Math.random() * pool.length)]; }, 70);
+    timers.push(spin);
+    let n = 5;
+    const tick = () => {
+      count.textContent = n;
+      count.classList.remove('pop'); void count.offsetWidth; count.classList.add('pop');
+      beep(660, 0.1);
+      if (n === 1) return;
+      n -= 1;
+      later(tick, 1000);
+    };
+    count.textContent = '';
+    n = 5;
+    tick();
+    later(() => {
+      clearInterval(spin);
+      count.textContent = '';
+      code.textContent = w.code;
+      $('#rsName', stage).textContent = test ? `${shortName(w.name)} · ${w.phone ? `cel. •••• ${String(w.phone).replace(/\D/g, '').slice(-3)}` : ''}` : shortName(w.name);
+      stage.classList.add('revealed');
+      [523, 659, 784, 1047].forEach((f, k) => later(() => beep(f, 0.35, 0.22), k * 140));
+      const next = i + 1 < winners.length;
+      $('#rsActions', stage).innerHTML = `
+        ${next ? `<button type="button" class="btn solid" data-rs-next>Siguiente premio: ${esc(winners[i + 1].prize)} →</button>` : ''}
+        ${!next && test ? '<button type="button" class="btn solid" data-rs-again>↻ Repetir la prueba</button>' : ''}
+        ${!next ? '<button type="button" class="btn" data-rs-close>Terminar</button>' : ''}`;
+      $('[data-rs-next]', stage)?.addEventListener('click', () => play(i + 1));
+      $('[data-rs-close]', stage)?.addEventListener('click', close);
+      $('[data-rs-again]', stage)?.addEventListener('click', async (e) => {
+        e.currentTarget.disabled = true;
+        try {
+          const fresh = await api('/api/admin/raffle/test', { method: 'POST' });
+          winners.splice(0, winners.length, ...fresh.winners);
+          play(0);
+        } catch (err) { toast(err.message, true); e.currentTarget.disabled = false; }
+      });
+    }, 5000);
+  };
+  // Antes de empezar: pantalla de inicio con el botón grande.
+  $('#rsPrize', stage).textContent = winners.map((w) => w.prize).join(' · ');
+  $('#rsMeta', stage).textContent = `${result.codes} códigos registrados · ${result.people} participantes${replay ? ' · resultado guardado' : ''}`;
+  $('#rsActions', stage).innerHTML = `<button type="button" class="btn solid rs-start">▶ ${replay ? 'Mostrar ganadores' : 'Empezar sorteo'}</button>`;
+  $('.rs-start', stage).addEventListener('click', () => play(0));
 }
 
 function viewComingSoon() {
