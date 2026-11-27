@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "shop.distintoscz.admin",
+      "sha256_cert_fingerprints": [
+        "36:0F:0B:3C:60:7F:59:A2:D9:81:2B:BD:9E:72:16:96:6E:D4:30:7E:DE:78:23:D3:88:5F:32:5A:69:94:76:5D"
+      ]
+    }
+  }
+]

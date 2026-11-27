@@ -2185,6 +2185,8 @@ const MIME = {
   '.webp': 'image/webp',
   '.gif': 'image/gif',
   '.ico': 'image/x-icon',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
 };
 
 function serveStatic(req, res, pathname) {

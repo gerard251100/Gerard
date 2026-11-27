@@ -24,6 +24,19 @@ const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const app = $('#app');
+// App de administración (Android): abre /admin-app y solo muestra el panel.
+const ADMIN_APP = location.pathname.replace(/\/+$/, '') === '/admin-app';
+if (ADMIN_APP) {
+  document.body.classList.add('app-mode');
+  document.title = 'Distinto Admin';
+  const tag = $('.brand-tag');
+  if (tag) tag.textContent = 'Panel de administración';
+  $('.brand')?.setAttribute('href', '#/admin');
+  const mf = document.createElement('link');
+  mf.rel = 'manifest';
+  mf.href = '/admin-app.webmanifest';
+  document.head.append(mf);
+}
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -255,6 +268,7 @@ const ICONS = {
 };
 function renderTabbar(route) {
   const bar = $('#tabbar');
+  if (ADMIN_APP) { renderAppTabbar(bar); return; }
   const n = cart.count();
   const item = (href, icon, label, { badge: count = 0, action = '', match = [] } = {}) => {
     const active = route === href || match.some((m) => route.startsWith(m));
@@ -282,7 +296,7 @@ async function logout() {
   state.user = null;
   $('#nav').classList.remove('open');
   toast('Sesión cerrada');
-  location.hash = '#/';
+  location.hash = ADMIN_APP ? '#/login' : '#/';
   renderNav();
 }
 
@@ -311,16 +325,20 @@ const routes = {
 
 async function router() {
   const route = location.hash.split('?')[0] || '#/';
+  // En la app solo existen el ingreso y el panel.
+  if (ADMIN_APP && route !== '#/login' && !route.startsWith('#/admin')) { location.replace('#/admin'); return; }
   renderNav();
   window.scrollTo(0, 0);
   app.classList.remove('page-enter');
   void app.offsetWidth; // reinicia la animación de entrada
   app.classList.add('page-enter');
   // Modo "Próximamente": los visitantes ven la pantalla de lanzamiento (salvo para ingresar).
-  const soon = settingsCache?.coming_soon === '1' && !state.user && route !== '#/login';
+  const soon = !ADMIN_APP && settingsCache?.coming_soon === '1' && !state.user && route !== '#/login';
   document.body.classList.toggle('soon-mode', soon);
   if (soon) { viewComingSoon(); return; }
-  const view = route.startsWith('#/pedido/') ? () => viewTrack(route.slice('#/pedido/'.length)) : routes[route] || viewHome;
+  const view = route.startsWith('#/pedido/') ? () => viewTrack(route.slice('#/pedido/'.length))
+    : route.startsWith('#/admin/') ? () => viewAdmin(route.slice('#/admin/'.length))
+    : routes[route] || viewHome;
   const done = showLoader(loaderTextFor(route));
   try {
     await view();
@@ -768,8 +786,9 @@ function viewLogin() {
   if (state.user) { location.hash = state.user.role === 'admin' ? '#/admin' : '#/panel'; return; }
   app.innerHTML = `
     <div class="form-wrap" style="max-width:440px">
-      <div class="eyebrow center">Bienvenido</div>
-      <h2 class="center">Ingresar</h2>
+      ${ADMIN_APP ? '<img src="/img/emblem.png" alt="" class="app-login-logo">' : ''}
+      <div class="eyebrow center">${ADMIN_APP ? 'Distinto SCZ' : 'Bienvenido'}</div>
+      <h2 class="center">${ADMIN_APP ? 'Panel de administración' : 'Ingresar'}</h2>
       <form class="card form" id="loginForm">
         <div class="field"><label for="l-email">Correo</label><input id="l-email" name="email" type="email" required autocomplete="email"></div>
         <div class="field"><label for="l-pass">Contraseña</label><input id="l-pass" name="password" type="password" required autocomplete="current-password"></div>
@@ -780,6 +799,10 @@ function viewLogin() {
     e.preventDefault();
     withBusy(e.submitter, async () => {
       const { user } = await api('/api/login', { method: 'POST', body: formData(e.target) });
+      if (ADMIN_APP && user.role !== 'admin') {
+        await api('/api/logout', { method: 'POST' }).catch(() => {});
+        throw new Error('Esta app es solo para el administrador');
+      }
       state.user = user;
       toast(`Hola, ${user.name}`);
       location.hash = user.role === 'admin' ? '#/admin' : '#/panel';
@@ -1232,7 +1255,12 @@ function orderFilterBar(statuses, current) {
    ================================================================= */
 async function viewAdmin(tab) {
   if (!requireRole('admin')) return;
+  if (!ADMIN_TABS[tab]) tab = 'resumen';
   state.tab.admin = tab;
+  // En la app cada sección tiene su dirección, así el botón "atrás" del celular vuelve a la anterior.
+  if (ADMIN_APP && location.hash !== `#/admin/${tab}`) {
+    history[location.hash.startsWith('#/admin/') ? 'pushState' : 'replaceState'](null, '', `#/admin/${tab}`);
+  }
   const done = showLoader('Cargando…', 500);
   try {
     await renderAdmin(tab);
@@ -1258,6 +1286,11 @@ async function renderAdmin(tab) {
     <nav class="tabs">${tabs.map(([k, l]) => `<button class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${l}</button>`).join('')}</nav>
     <div id="tabBody"></div>`;
   $$('[data-tab]').forEach((b) => b.addEventListener('click', () => viewAdmin(b.dataset.tab)));
+  if (ADMIN_APP) {
+    state.openOrders = summary.openOrders;
+    $('.panel-head h2').textContent = ADMIN_TABS[tab] || 'Panel';
+    renderTabbar();
+  }
   const body = $('#tabBody');
   const views = { resumen: adminSummary, visitas: adminVisits, catalogo: adminPerfumes, combos: adminCombos, stock: adminStock, sorteo: adminRaffle, pedidos: adminOrders, cuenta: adminAccount };
   await (views[tab] || views.resumen)(body, summary);
@@ -2492,7 +2525,7 @@ $('#year').textContent = new Date().getFullYear();
   } catch { /* sin sesión */ }
   // El botón flotante usa el número de WhatsApp configurado en Pagos y cuenta.
   if (settingsCache?.whatsapp) $('#waFloat').href = waLink(settingsCache.whatsapp, 'Hola Distinto SCZ, quiero información sobre sus perfumes.');
-  applyBlackFriday();
+  if (!ADMIN_APP) applyBlackFriday();
   router();
 })();
 
@@ -2887,7 +2920,7 @@ const visitInfo = (() => {
 let firstTrack = true;
 
 function track(kind = 'view') {
-  if (state.user?.role === 'admin' || location.protocol === 'file:') return; // el administrador no se cuenta
+  if (ADMIN_APP || state.user?.role === 'admin' || location.protocol === 'file:') return; // el administrador no se cuenta
   const body = JSON.stringify({
     kind, path: location.hash || '#/', visitor: visitInfo.visitor, session: visitInfo.session,
     new: visitInfo.isNew && firstTrack, ref: visitInfo.ref, referrer: visitInfo.referrer,
@@ -3340,6 +3373,62 @@ function comboForm(c, perfumes, done) {
       toast(editing ? 'Combo guardado' : 'Combo creado');
       done();
     });
+  });
+}
+
+
+/* =================================================================
+   App de administración (Android)
+   ================================================================= */
+const ADMIN_TABS = {
+  resumen: 'Resumen', stock: 'Ventas y stock', catalogo: 'Catálogo', pedidos: 'Pedidos',
+  combos: 'Combos', visitas: 'Visitas', sorteo: 'Sorteo', cuenta: 'Pagos y cuenta',
+};
+const MORE_TABS = ['combos', 'visitas', 'sorteo', 'cuenta'];
+const APP_ICONS = {
+  sales: '<path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5M15.5 15.5l1.5 1.5 3-3"/>',
+  more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+};
+
+function renderAppTabbar(bar) {
+  if (!state.user) { bar.innerHTML = ''; return; }
+  const cur = state.tab.admin || 'resumen';
+  const item = (tab, icon, label, count = 0) => `
+    <a href="#/admin/${tab}" class="tab-item ${cur === tab ? 'active' : ''}">
+      <svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[icon] || APP_ICONS[icon]}</svg>
+      ${count ? `<span class="tab-badge">${count}</span>` : ''}
+      <span>${label}</span></a>`;
+  bar.innerHTML = item('resumen', 'home', 'Inicio')
+    + item('stock', 'sales', 'Ventas')
+    + item('catalogo', 'grid', 'Catálogo')
+    + item('pedidos', 'receipt', 'Pedidos', state.openOrders || 0)
+    + `<a href="#" class="tab-item ${MORE_TABS.includes(cur) ? 'active' : ''}" data-app-more>
+        <svg viewBox="0 0 24 24" aria-hidden="true">${APP_ICONS.more}</svg><span>Más</span></a>`;
+}
+
+function appMoreMenu() {
+  const cur = state.tab.admin;
+  const root = openModal(`
+    <div class="eyebrow">Distinto Admin</div>
+    <h3>Más opciones</h3>
+    <div class="app-more">
+      ${MORE_TABS.map((t) => `<a class="app-more-item ${cur === t ? 'active' : ''}" href="#/admin/${t}">${ADMIN_TABS[t]}</a>`).join('')}
+      <a class="app-more-item" href="/" target="_blank" rel="noopener">Ver la tienda ↗</a>
+      <button type="button" class="app-more-item danger" data-app-logout>Cerrar sesión</button>
+    </div>`);
+  $$('a[href^="#/admin/"]', root).forEach((a) => a.addEventListener('click', closeModal));
+  $('[data-app-logout]', root).addEventListener('click', () => {
+    if (!confirm('¿Cerrar sesión en la app?')) return;
+    closeModal();
+    logout();
+  });
+}
+
+if (ADMIN_APP) {
+  $('#tabbar').addEventListener('click', (e) => {
+    if (!e.target.closest('[data-app-more]')) return;
+    e.preventDefault();
+    appMoreMenu();
   });
 }
 

@@ -1,0 +1,19 @@
+pluginManagement {
+    repositories {
+        google()
+        // Espejo de Maven Central en Google (Maven Central a veces limita descargas).
+        maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositories {
+        google()
+        // Espejo de Maven Central en Google (Maven Central a veces limita descargas).
+        maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+        mavenCentral()
+    }
+}
+rootProject.name = 'DistintoAdmin'
+include ':app'
